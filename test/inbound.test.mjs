@@ -39,6 +39,10 @@ beforeEach(() => {
     PUBLIC_URL: "https://bot.example.com",
     STALE_FLOOR_HOURS: "2",
     MATERIALIZE_HORIZON_HOURS: "48",
+    // This file is about the webhook: allowlist, dedupe, parse, reply. The
+    // board posts a second message on the same channel after every reply,
+    // which would make `replies()` ambiguous here. It has its own file.
+    BOARD_ENABLED: "0",
   };
   sent = installFetchCapture();
   pending = [];
@@ -184,7 +188,16 @@ test("a full round trip: create by text, get nagged, tap Done", async () => {
   const fireAt = localToUtc(2026, 8, 12, 9, 0, TZ);
   d1.exec(`UPDATE tasks SET dtstart = '${iso(fireAt - 86400_000)}'`);
   sent.length = 0;
-  const r = await runTick(env, fireAt);
+
+  // A task created without saying anything about insistence gets the 'default'
+  // policy, which is quiet-tier: at its due time it lands on the board and says
+  // nothing out loud. The push only comes once it has aged out.
+  const quiet = await runTick(env, fireAt);
+  assert.equal(quiet.parked, 1);
+  assert.equal(quiet.sent, 0, "a quiet reminder must not push at its due time");
+  assert.equal(sent.filter((s) => s.kind === "telegram").length, 0);
+
+  const r = await runTick(env, fireAt + 4 * 3600_000); // QUIET_AGING_HOURS
   assert.equal(r.sent, 1);
 
   const nag = sent.find((s) => s.kind === "telegram");
