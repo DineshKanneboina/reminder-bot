@@ -1,0 +1,26 @@
+{
+  "name": "reminder-bot",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc",
+    "db:init": "wrangler d1 execute reminder-bot --remote --file=./schema.sql",
+    "db:seed": "wrangler d1 execute reminder-bot --remote --file=./seed.sql",
+    "pretest": "sh build-test.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "type": "module",
+  "private": "true",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260811.1",
+    "wrangler": "^4.120.1"
+  }
+}

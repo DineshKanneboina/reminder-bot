@@ -1,0 +1,368 @@
+/**
+ * Reply parsing.
+ *
+ * Fast path first: buttons and keywords cover the overwhelming majority of
+ * traffic and must never be slow, costly, or nondeterministic. Only genuinely
+ * novel text reaches the model.
+ */
+
+import { LiveInstance } from "./types";
+
+export type Intent =
+  | "create" | "update" | "delete" | "complete" | "snooze" | "skip"
+  | "list" | "tasks" | "set_timezone" | "set_quiet_hours"
+  | "pause" | "resume" | "confirm" | "help" | "unknown";
+
+export interface Parsed {
+  intent: Intent;
+  confidence: number;
+  target: { instance_number: number | null; instance_id: string | null; task_query: string | null };
+  task: {
+    title: string | null;
+    rrule: string | null;
+    local_time: string | null;
+    /** YYYY-MM-DD in the user's timezone — for one-offs and delayed starts. */
+    start_date: string | null;
+    policy: string | null;
+    overlap: "supersede" | "stack" | null;
+  };
+  snooze_minutes: number | null;
+  timezone: string | null;
+  quiet_hours: { start: string; end: string } | null;
+  pause_minutes: number | null;
+  clarifying_question: string | null;
+  source: "button" | "keyword" | "llm";
+}
+
+const blank = (intent: Intent, source: Parsed["source"], patch: Partial<Parsed> = {}): Parsed => ({
+  intent,
+  confidence: 1,
+  target: { instance_number: null, instance_id: null, task_query: null },
+  task: { title: null, rrule: null, local_time: null, start_date: null, policy: null, overlap: null },
+  snooze_minutes: null,
+  timezone: null,
+  quiet_hours: null,
+  pause_minutes: null,
+  clarifying_question: null,
+  source,
+  ...patch,
+});
+
+/** '30m' | '2h' | '90' -> minutes */
+export function parseDuration(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = /^(\d+)\s*(m|min|mins|minutes|h|hr|hrs|hours|d|days?)?$/i.exec(s.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  const unit = (m[2] ?? "m").toLowerCase();
+  if (unit.startsWith("h")) return n * 60;
+  if (unit.startsWith("d")) return n * 1440;
+  return n;
+}
+
+// ------------------------------------------------------------------ fast path
+
+/**
+ * Button callbacks: `verb:instanceId:index[:arg]`. Unambiguous by construction
+ * — the payload carries the exact instance id, so there is nothing to resolve.
+ */
+export function parseButton(payload: string): Parsed | null {
+  const [verb, instanceId, , arg] = payload.split(":");
+  if (!instanceId) return null;
+  const target = { instance_number: null, instance_id: instanceId, task_query: null };
+  switch (verb) {
+    case "done":
+      return blank("complete", "button", { target });
+    case "skip":
+      return blank("skip", "button", { target });
+    case "snooze":
+      return blank("snooze", "button", { target, snooze_minutes: parseDuration(arg) ?? 60 });
+    default:
+      return null;
+  }
+}
+
+/**
+ * Keyword path. Returns null if nothing matches, in which case the caller
+ * escalates to the model.
+ *
+ * A bare `done` with more than one live chain deliberately does NOT guess —
+ * acknowledging the wrong reminder silences something you needed.
+ */
+export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
+  const text = raw.trim().toLowerCase().replace(/[.!]+$/, "");
+  const byNumber = (n: number | null) =>
+    n && live[n - 1] ? live[n - 1].id : null;
+
+  let m: RegExpExecArray | null;
+
+  // done | done 2 | d 2 | ✅ | x
+  if ((m = /^(?:done|d|x|✅|✔️?|finished|complete)\s*(\d+)?$/.exec(text))) {
+    const n = m[1] ? parseInt(m[1], 10) : null;
+    if (n === null && live.length > 1) {
+      return blank("unknown", "keyword", {
+        confidence: 0.3,
+        clarifying_question: "Which one? Reply with its number, e.g. `done 2`.",
+      });
+    }
+    const idx = n ?? (live.length === 1 ? 1 : null);
+    return blank("complete", "keyword", {
+      target: { instance_number: idx, instance_id: byNumber(idx), task_query: null },
+    });
+  }
+
+  // snooze | snooze 30m | snooze 2 1h | later
+  // Whitespace between the groups is required. Without it, `\s*(\d+)?` grabs
+  // the "4" of "45m" as an index and leaves "5m" as the duration.
+  if ((m = /^(?:snooze|later|zz)(?:\s+(\d+))?(?:\s+(\d+\s*(?:m|min|mins|minutes|h|hr|hrs|hours)?))?$/.exec(text))) {
+    const hasIndex = m[1] !== undefined && m[2] !== undefined;
+    const idx = hasIndex ? parseInt(m[1], 10) : live.length === 1 ? 1 : null;
+    const dur = parseDuration(hasIndex ? m[2] : (m[2] ?? m[1])) ?? 60;
+    if (idx === null && live.length > 1) {
+      return blank("unknown", "keyword", {
+        confidence: 0.3,
+        clarifying_question: "Snooze which one? e.g. `snooze 2 30m`.",
+      });
+    }
+    return blank("snooze", "keyword", {
+      target: { instance_number: idx, instance_id: byNumber(idx), task_query: null },
+      snooze_minutes: dur,
+    });
+  }
+
+  // skip | skip 3
+  if ((m = /^skip\s*(\d+)?$/.exec(text))) {
+    const idx = m[1] ? parseInt(m[1], 10) : live.length === 1 ? 1 : null;
+    if (idx === null && live.length > 1) {
+      return blank("unknown", "keyword", {
+        confidence: 0.3,
+        clarifying_question: "Skip which one? e.g. `skip 2`.",
+      });
+    }
+    return blank("skip", "keyword", {
+      target: { instance_number: idx, instance_id: byNumber(idx), task_query: null },
+    });
+  }
+
+  if (/^(list|open|now|today|what'?s? (?:open|due))$/.test(text)) return blank("list", "keyword");
+  if (/^(tasks|reminders|all)$/.test(text)) return blank("tasks", "keyword");
+  if (/^(help|\?|start|\/start|\/help)$/.test(text)) return blank("help", "keyword");
+  // Common questions about the bot itself — answer with help, skip the model.
+  if (/what (can|do) (you|u)|what are (you|your)|how do (you|i|this)|what.*buttons?|capabilit/i.test(text)) {
+    return blank("help", "keyword");
+  }
+  if (/^(y|yes|yep|confirm|ok|okay)$/.test(text)) return blank("confirm", "keyword");
+  if (/^(resume|unpause|back)$/.test(text)) return blank("resume", "keyword");
+
+  if ((m = /^(?:pause|stop|mute)\s*(\d+\s*\w*)?$/.exec(text))) {
+    return blank("pause", "keyword", { pause_minutes: parseDuration(m[1]) });
+  }
+
+  // Speakable policies: "make gym urgent", "set trash to gentle".
+  // Last, so it can't shadow the verbs above; a policy word must end the line.
+  if ((m = /^(?:make|set)\s+(.+?)(?:\s+to)?\s+(gentle|urgent|quiet|notify|default)$/.exec(text))) {
+    return blank("update", "keyword", {
+      target: { instance_number: null, instance_id: null, task_query: m[1] },
+      task: {
+        title: null, rrule: null, local_time: null, start_date: null,
+        // "quiet" is how the tier is spoken; 'default' is the policy that carries it.
+        policy: m[2] === "quiet" ? "default" : m[2],
+        overlap: null,
+      },
+    });
+  }
+
+  return null;
+}
+
+// ------------------------------------------------------------------ LLM path
+
+const SYSTEM = `You convert short text messages into reminder-app commands.
+
+Reply with ONE JSON object and nothing else. No prose, no markdown fences.
+
+Schema:
+{
+  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_timezone|set_quiet_hours|pause|resume|unknown",
+  "confidence": 0.0-1.0,
+  "target": {"instance_number": int|null, "task_query": string|null},
+  "task": {"title": string|null, "rrule": string|null, "local_time": "HH:MM"|null,
+           "start_date": "YYYY-MM-DD"|null,
+           "policy": "notify|gentle|default|urgent"|null, "overlap": "supersede|stack"|null},
+  "snooze_minutes": int|null,
+  "timezone": "IANA zone"|null,
+  "quiet_hours": {"start":"HH:MM","end":"HH:MM"}|null,
+  "pause_minutes": int|null,
+  "clarifying_question": string|null
+}
+
+Rules:
+0. Questions ABOUT the bot itself — capabilities ("what can you do"), how it
+   works, what the buttons do, how to phrase things — are intent "help" with
+   confidence 1.0. Do not ask a clarifying question for these; "help" IS the
+   answer. Only use "unknown" when the message looks like a task command you
+   cannot parse.
+1. "rrule" is a bare RFC 5545 rule: FREQ=WEEKLY;BYDAY=MO,WE,FR. Never natural
+   language. Never include DTSTART. Use BYDAY with an ordinal for things like
+   the last Friday of the month (BYDAY=-1FR).
+1b. ONE-TIME reminders ("remind me to X", "tomorrow at 3", "on sept 20") are
+   rrule "FREQ=DAILY;COUNT=1". Resolve "today"/"tomorrow"/weekday names into
+   start_date using the supplied now and timezone; never schedule a one-off in
+   the past — if the time today has passed, use tomorrow. If the user gives no
+   time or date at all ("soon", "at some point"), still emit the COUNT=1 rrule
+   with start_date and local_time null — the app picks a default. Do NOT ask
+   how often for a one-time reminder.
+2. Resolve relative times against the supplied now and timezone. Never assume UTC.
+3. Never invent a local_time. If the user gave no time, leave it null.
+4. Prefer overlap "stack" only for things that genuinely accumulate (paperwork,
+   errands). Daily habits are "supersede".
+5. If the message is ambiguous or you are guessing, set intent "unknown", a low
+   confidence, and write a clarifying_question. Do not guess.
+6. "task_query" is a short substring of an existing task title, for update,
+   delete, complete and skip.
+7. Titles are short and imperative: "gym", "take out trash", "review finances".
+8. FOLLOW-UPS: "that" / "it" / "the reminder" refers to the task in the
+   previous exchange. "Make that in the evening" after creating a task is
+   intent "update" with that task as task_query and the new local_time.
+9. If your previous reply was a clarifying question, the current message is
+   probably the ANSWER. Merge it with what the user originally asked and emit
+   the complete intent — never reply "nothing to change" territory: an update
+   must carry the field being changed.
+10. Times of day when no clock time is given: morning=09:00, noon=12:00,
+   afternoon=15:00, evening=18:00, night/tonight=21:00.
+11. POLICY is how loudly it nags, and is spoken plainly. Set it on create AND on
+   update, whenever the user says something about insistence:
+     "just notify me", "one ping", "don't nag"        -> "notify"
+     "gently", "softly", "no rush", "easy on me"      -> "gentle"
+     "quietly", "on the board", "normal"              -> "default"
+     "urgent", "important", "keep at me", "nag me"    -> "urgent"
+   "make the gym one urgent" / "stop nagging me about trash" are intent
+   "update" with task_query set and ONLY policy changed — leave rrule and
+   local_time null so the schedule is left alone.`;
+
+export async function parseWithLlm(
+  text: string,
+  ctx: {
+    now: number;
+    timezone: string;
+    live: LiveInstance[];
+    taskTitles: string[];
+    lastExchange?: { user: string; bot: string } | null;
+  },
+  env: { ANTHROPIC_API_KEY?: string; PARSER_MODEL?: string },
+): Promise<Parsed> {
+  if (!env.ANTHROPIC_API_KEY) {
+    return blank("unknown", "llm", {
+      confidence: 0,
+      clarifying_question:
+        "I didn't understand that. Try: `gym every mon/wed/fri at 6:30am`, `list`, or `done 1`.",
+    });
+  }
+
+  const context = [
+    `now: ${new Date(ctx.now).toISOString()}`,
+    ctx.lastExchange
+      ? `previous exchange —\n  user said: ${ctx.lastExchange.user}\n  you replied: ${ctx.lastExchange.bot}`
+      : `previous exchange — none`,
+    `timezone: ${ctx.timezone}`,
+    `open reminders: ${
+      ctx.live.length
+        ? ctx.live.map((i, k) => `${k + 1}. ${i.title}`).join("; ")
+        : "none"
+    }`,
+    `existing tasks: ${ctx.taskTitles.join("; ") || "none"}`,
+  ].join("\n");
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: env.PARSER_MODEL ?? "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      system: SYSTEM,
+      messages: [{ role: "user", content: `${context}\n\nmessage: ${text}` }],
+    }),
+  });
+
+  if (!res.ok) {
+    return blank("unknown", "llm", {
+      confidence: 0,
+      clarifying_question: "I couldn't parse that right now — try again in a moment?",
+    });
+  }
+
+  const data = (await res.json()) as any;
+  const body = (data.content ?? [])
+    .filter((c: any) => c.type === "text")
+    .map((c: any) => c.text)
+    .join("")
+    .replace(/```json|```/g, "")
+    .trim();
+
+  try {
+    const raw = JSON.parse(body);
+    const p = blank(normalizeIntent(raw.intent), "llm", {
+      confidence: clamp(raw.confidence),
+      target: {
+        instance_number: intOrNull(raw.target?.instance_number),
+        instance_id: null,
+        task_query: strOrNull(raw.target?.task_query),
+      },
+      task: {
+        title: strOrNull(raw.task?.title),
+        rrule: strOrNull(raw.task?.rrule),
+        local_time: strOrNull(raw.task?.local_time),
+        start_date: (() => {
+          const v = strOrNull(raw.task?.start_date);
+          return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+        })(),
+        policy: strOrNull(raw.task?.policy),
+        overlap: raw.task?.overlap === "stack" ? "stack" : raw.task?.overlap === "supersede" ? "supersede" : null,
+      },
+      snooze_minutes: intOrNull(raw.snooze_minutes),
+      timezone: strOrNull(raw.timezone),
+      quiet_hours:
+        raw.quiet_hours?.start && raw.quiet_hours?.end
+          ? { start: String(raw.quiet_hours.start), end: String(raw.quiet_hours.end) }
+          : null,
+      pause_minutes: intOrNull(raw.pause_minutes),
+      clarifying_question: strOrNull(raw.clarifying_question),
+    });
+    // Resolve a model-supplied index against the real live list.
+    const n = p.target.instance_number;
+    if (n && ctx.live[n - 1]) p.target.instance_id = ctx.live[n - 1].id;
+    return p;
+  } catch {
+    return blank("unknown", "llm", {
+      confidence: 0,
+      clarifying_question: "I didn't quite get that — can you rephrase?",
+    });
+  }
+}
+
+/** Destructive or low-confidence actions get a two-turn handshake. */
+export function needsConfirmation(p: Parsed): boolean {
+  if (p.source === "button") return false;
+  if (p.intent === "delete") return true;
+  if (p.intent === "update" && p.task.rrule) return true;
+  return p.confidence < 0.8;
+}
+
+const INTENTS: Intent[] = [
+  "create", "update", "delete", "complete", "snooze", "skip", "list", "tasks",
+  "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
+];
+
+function normalizeIntent(v: unknown): Intent {
+  const s = String(v ?? "").toLowerCase() as Intent;
+  return INTENTS.includes(s) ? s : "unknown";
+}
+const clamp = (v: unknown): number => Math.min(1, Math.max(0, Number(v) || 0));
+const strOrNull = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() ? v.trim() : null;
+const intOrNull = (v: unknown): number | null =>
+  Number.isFinite(Number(v)) && v !== null && v !== "" ? Math.round(Number(v)) : null;

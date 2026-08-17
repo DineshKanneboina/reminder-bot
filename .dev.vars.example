@@ -1,0 +1,10 @@
+# Copy to .dev.vars for local development. Never commit .dev.vars.
+TELEGRAM_BOT_TOKEN=123456:AA...
+TELEGRAM_WEBHOOK_SECRET=generate-a-long-random-string
+ACK_SIGNING_KEY=generate-another-long-random-string
+BOOTSTRAP_TOKEN=one-time-phrase-you-will-text-the-bot
+ANTHROPIC_API_KEY=sk-ant-...
+# Optional
+RESEND_API_KEY=re_...
+EMAIL_FROM=reminders@yourdomain.com
+HEARTBEAT_URL=https://hc-ping.com/your-uuid

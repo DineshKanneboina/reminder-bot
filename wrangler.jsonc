@@ -1,0 +1,35 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "reminder-bot",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-01",
+	// Needed for full Intl / IANA timezone data, which the whole DST story rests on.
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// One tick per minute. Free plan allows up to 3 triggers per Worker; we use 1.
+	// Cron expressions are evaluated in UTC — all local-time reasoning happens in
+	// the app against each user's IANA zone, never here.
+	"triggers": {
+		"crons": [
+			"* * * * *"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "reminder-bot",
+			"database_id": "c4a71c51-d2d4-46bf-8c0d-bbfd5171039e"
+		}
+	],
+	"vars": {
+		// Public origin of this Worker, used to build signed ack links in emails.
+		"PUBLIC_URL": "https://reminder-bot.dineshkan.workers.dev",
+		"PARSER_MODEL": "claude-haiku-4-5-20251001",
+		"MATERIALIZE_HORIZON_HOURS": "48",
+		"STALE_FLOOR_HOURS": "2"
+	},
+	"observability": {
+		"enabled": true
+	}
+}
