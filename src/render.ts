@@ -1,10 +1,19 @@
-import { describeRRule } from "./rrule";
-import { toLocalParts } from "./time";
+import { describeRRule, oneOffOccurrence } from "./rrule";
+import { ms, toLocalParts } from "./time";
 import { LiveInstance, OutboundAction, TaskRow } from "./types";
 
 export const clock = (isoStr: string, tz: string): string => {
   const p = toLocalParts(Date.parse(isoStr), tz);
   return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+};
+
+const SHORT_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** 'Thu 13 Aug' — enough to place a one-off without a full timestamp. */
+export const shortDate = (epochMs: number, tz: string): string => {
+  const p = toLocalParts(epochMs, tz);
+  return `${SHORT_DAYS[p.weekday]} ${p.day} ${SHORT_MONTHS[p.month - 1]}`;
 };
 
 const ordinal = (n: number): string =>
@@ -68,12 +77,43 @@ export function renderLiveList(insts: LiveInstance[]) {
   };
 }
 
-export function renderTaskList(tasks: TaskRow[]) {
-  if (tasks.length === 0) return "You have no active reminders. Try: <code>gym every mon/wed/fri at 6:30am</code>";
-  const lines = tasks.map(
-    (t) => `• <b>${esc(t.title)}</b> — ${describeRRule(t.rrule, t.local_time)}`,
-  );
-  return `<b>Your reminders</b>\n${lines.join("\n")}`;
+/**
+ * The tasks list, split by what will actually happen again.
+ *
+ * A spent one-off is still active=1 in the database — nothing retires it — so
+ * listing it alongside live reminders makes the whole list untrustworthy: you
+ * end up comparing a board that is right against a list that is lying.
+ */
+export function renderTaskList(tasks: TaskRow[], now: number) {
+  if (tasks.length === 0) {
+    return "You have no active reminders. Try: <code>gym every mon/wed/fri at 6:30am</code>";
+  }
+
+  const live: string[] = [];
+  const spent: string[] = [];
+  let firstSpent = "";
+
+  for (const t of tasks) {
+    const once = oneOffOccurrence(t.rrule, ms(t.dtstart), t.local_time, t.timezone);
+    if (once === null) {
+      live.push(`• <b>${esc(t.title)}</b> — ${describeRRule(t.rrule, t.local_time)}`);
+    } else if (once > now) {
+      live.push(`• <b>${esc(t.title)}</b> — once, ${shortDate(once, t.timezone)} at ${t.local_time}`);
+    } else {
+      if (!firstSpent) firstSpent = t.title;
+      spent.push(`• <s>${esc(t.title)}</s> — was ${shortDate(once, t.timezone)}`);
+    }
+  }
+
+  const blocks: string[] = [];
+  if (live.length) blocks.push(`<b>Your reminders</b>\n${live.join("\n")}`);
+  if (spent.length) {
+    blocks.push(
+      `<b>Already happened</b>\n${spent.join("\n")}\n` +
+        `<i>One-offs stay here until you clear them — <code>delete ${esc(firstSpent)}</code>.</i>`,
+    );
+  }
+  return blocks.join("\n\n");
 }
 
 export function esc(s: string): string {

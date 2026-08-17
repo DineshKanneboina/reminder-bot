@@ -166,7 +166,7 @@ export async function applyIntent(
     }
 
     case "tasks":
-      return { text: renderTaskList(await db.tasksForUser(user.id)) };
+      return { text: renderTaskList(await db.tasksForUser(user.id), now) };
 
     case "set_timezone": {
       if (!p.timezone || !isValidZone(p.timezone)) {

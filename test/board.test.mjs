@@ -217,6 +217,23 @@ test("board numbering and buttons both resolve to the exact instance", async () 
   assert.equal(parseButton(buttons[1].callback_data).target.instance_id, live[1].id);
 });
 
+test("the board says what was missed today, not just what was done", async () => {
+  seedTask("09:00", { policy: "pol_urgent" }); // pushes on time, gives up after 120m
+  await runTick(env, T0);
+  assert.match(boards()[0].text, /<b>Due<\/b>/);
+  sent.length = 0;
+
+  const r = await runTick(env, T0 + 121 * 60_000);
+  assert.equal(r.expired, 1);
+
+  const [edit] = edits();
+  assert.ok(edit, "the board was updated when it ran out of road");
+  assert.match(edit.text, /<b>Missed<\/b>/);
+  assert.match(edit.text, /take out trash · was 09:00/);
+  assert.doesNotMatch(edit.text, /<b>Due<\/b>/, "it is no longer open");
+  assert.doesNotMatch(edit.text, /<b>Done<\/b>/, "and it was certainly not done");
+});
+
 test("an unchanged board is not re-edited on every tick", async () => {
   seedTask("09:00");
   await runTick(env, T0);

@@ -394,15 +394,20 @@ export class Db {
     return r.results ?? [];
   }
 
-  /** Everything closed out during the local day, for the board's log section. */
-  async closedForUser(userId: string, fromIso: string, untilIso: string): Promise<ClosedInstance[]> {
+  /**
+   * Everything that reached a terminal state during the local day, for the
+   * board's log sections. Includes 'expired': an item that ran out of road
+   * today is the single most useful thing a nagging bot can still tell you,
+   * and dropping it would make the day's record silently incomplete.
+   */
+  async settledForUser(userId: string, fromIso: string, untilIso: string): Promise<ClosedInstance[]> {
     const r = await this.d1
       .prepare(
         `SELECT i.id, i.state, i.scheduled_for, t.title, t.timezone
            FROM reminder_instances i
            JOIN tasks t ON t.id = i.task_id
           WHERE i.user_id = ?1
-            AND i.state IN ('acknowledged','skipped')
+            AND i.state IN ('acknowledged','skipped','expired')
             AND i.scheduled_for >= ?2
             AND i.scheduled_for < ?3
           ORDER BY i.scheduled_for ASC`,

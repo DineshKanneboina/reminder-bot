@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 63 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 67 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — wrangler deploy to production (owner runs this)
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
@@ -14,7 +14,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 Two loops over one D1 database:
 
 - `tick.ts` — cron tick, five idempotent phases: (A) materialize occurrences 48h ahead from RRULEs, (B) catch-up digest if the worker was down 2h+, (C) expire / supersede stale chains, (D) claim due instances with a 2-minute lease, route, send, write backoff, (E) reconcile the pinned daily board. Cron does NOT retry failed runs; the DB-driven design self-heals on the next tick.
-- `board.ts` — the daily board and the quiet half of routing. Renders due / later today / done, posts one pinned message per local day, edits it in place, unpins yesterday's. Never throws into the tick.
+- `board.ts` — the daily board and the quiet half of routing. Renders due / later today / missed / done, posts one pinned message per local day, edits it in place, unpins yesterday's. Never throws into the tick.
 - `index.ts` — webhook entry. Inbound: sender allowlist → dedupe on provider message id → parse (button → keyword → LLM) → applyIntent → reply → save dialog state.
 - `parser.ts` — fast keyword/regex paths first (done/snooze/list/questions — these must never cost an API call); Claude Haiku via env.ANTHROPIC_API_KEY only for novel text. Single JSON response schema, strictly normalized.
 - `commands.ts` — intent → DB mutation → reply string. Destructive or low-confidence intents go through a two-turn y-confirmation (pending_actions).
@@ -42,6 +42,9 @@ Two loops over one D1 database:
 - A policy change never supersedes live instances — they join their policy through the task and pick the new tier up on the next tick.
 - The board is a view: a failed post or edit must never cost a nag, and never fails the tick.
 - Identical board content is not re-edited (fingerprint), or every tick would burn an API call Telegram rejects as unmodified.
+- The board shows Missed (expired today) above Done. An item that ran out of road is the most useful thing left to report.
+- COUNT=1 is described as "once", never by its FREQ. `FREQ=DAILY;COUNT=1` is a one-off and calling it "daily" states the opposite of what will happen.
+- Spent one-offs are quarantined under "Already happened" in the tasks list. Nothing retires them (active stays 1), so listing them as live makes the whole list untrustworthy.
 
 ## Conventions
 

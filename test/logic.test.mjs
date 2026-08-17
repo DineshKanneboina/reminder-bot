@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { localToUtc, toLocalParts, inQuietHours, pushPastQuietHours } from "../build/time.js";
-import { occurrencesBetween, parseRRule, describeRRule } from "../build/rrule.js";
+import { occurrencesBetween, parseRRule, describeRRule, oneOffOccurrence } from "../build/rrule.js";
+import { renderTaskList } from "../build/render.js";
 
 const TZ = "America/Chicago";
 const at = (ms) => {
@@ -155,4 +156,59 @@ test("rrule parser rejects garbage loudly", () => {
 test("describeRRule is readable", () => {
   assert.equal(describeRRule("FREQ=WEEKLY;BYDAY=MO,WE,FR", "06:30"), "Mon/Wed/Fri at 06:30");
   assert.equal(describeRRule("FREQ=DAILY", "08:00"), "daily at 08:00");
+});
+
+test("a one-off is never described as recurring", () => {
+  // COUNT=1 is how the parser encodes "remind me to X tomorrow". Calling that
+  // "daily" tells the user the opposite of what will happen.
+  assert.equal(describeRRule("FREQ=DAILY;COUNT=1", "18:00"), "once at 18:00");
+  assert.equal(describeRRule("FREQ=WEEKLY;BYDAY=TH;COUNT=1", "18:00"), "once at 18:00");
+});
+
+test("oneOffOccurrence finds the single landing, and only for one-offs", () => {
+  // Created 10:49, due 18:00 the same day.
+  const sameDay = localToUtc(2026, 8, 13, 10, 49, TZ);
+  assert.equal(
+    oneOffOccurrence("FREQ=DAILY;COUNT=1", sameDay, "18:00", TZ),
+    localToUtc(2026, 8, 13, 18, 0, TZ),
+  );
+
+  // Created after that time of day has already passed: it lands tomorrow. This
+  // is why a 09:00 task made at 10:05 has nothing on today's board.
+  const tooLate = localToUtc(2026, 8, 17, 10, 5, TZ);
+  assert.equal(
+    oneOffOccurrence("FREQ=DAILY;COUNT=1", tooLate, "09:00", TZ),
+    localToUtc(2026, 8, 18, 9, 0, TZ),
+  );
+
+  assert.equal(oneOffOccurrence("FREQ=DAILY", sameDay, "18:00", TZ), null, "not a one-off");
+});
+
+test("the tasks list separates what will happen again from what already did", () => {
+  const task = (title, rrule, dtstartMs) => ({
+    title,
+    rrule,
+    dtstart: new Date(dtstartMs).toISOString(),
+    local_time: "18:00",
+    timezone: TZ,
+  });
+  const now = localToUtc(2026, 8, 17, 13, 0, TZ);
+
+  const out = renderTaskList(
+    [
+      task("water plants", "FREQ=DAILY", localToUtc(2026, 8, 1, 9, 0, TZ)),
+      task("find Cindy", "FREQ=DAILY;COUNT=1", localToUtc(2026, 8, 13, 10, 49, TZ)),
+      task("book flight", "FREQ=DAILY;COUNT=1", localToUtc(2026, 8, 17, 10, 0, TZ)),
+    ],
+    now,
+  );
+
+  assert.match(out, /water plants<\/b> — daily at 18:00/);
+  assert.match(out, /book flight<\/b> — once, Mon 17 Aug at 18:00/);
+
+  // The one that already fired is quarantined, not listed as if it were live.
+  assert.match(out, /<b>Already happened<\/b>/);
+  assert.match(out, /<s>find Cindy<\/s> — was Thu 13 Aug/);
+  assert.doesNotMatch(out, /<b>find Cindy<\/b>/);
+  assert.match(out, /delete find Cindy/, "and it says how to clear it");
 });

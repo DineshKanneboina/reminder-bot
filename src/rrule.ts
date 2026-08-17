@@ -219,9 +219,39 @@ export function occurrencesBetween(
   return out.sort((a, b) => a - b);
 }
 
+/**
+ * When a one-off actually lands, or null if this rule isn't a one-off.
+ *
+ * COUNT=1 is how the parser encodes "remind me to X tomorrow", so a task with
+ * that rule has exactly one occurrence, ever — and once it has passed the task
+ * is spent, however alive it still looks in the tasks table.
+ */
+export function oneOffOccurrence(
+  rruleStr: string,
+  dtstartMs: number,
+  localTime: string,
+  tz: string,
+): number | null {
+  let rule: Rule;
+  try {
+    rule = parseRRule(rruleStr);
+  } catch {
+    return null;
+  }
+  if (rule.count !== 1) return null;
+  // COUNT=1 stops the walk at the first match, so the window can be generous.
+  const occ = occurrencesBetween(
+    rruleStr, dtstartMs, localTime, tz, dtstartMs, dtstartMs + 400 * 86400_000,
+  );
+  return occ.length ? occ[0] : null;
+}
+
 /** Human-readable summary of a rule, for confirmation messages. */
 export function describeRRule(rruleStr: string, localTime: string): string {
   const r = parseRRule(rruleStr);
+  // Describing a one-off by its FREQ says the opposite of what will happen:
+  // "FREQ=DAILY;COUNT=1" is not "daily", it is exactly once.
+  if (r.count === 1) return `once at ${localTime}`;
   const days = r.byDay
     .map((d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.weekday])
     .join("/");
