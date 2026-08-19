@@ -239,11 +239,30 @@ export function oneOffOccurrence(
     return null;
   }
   if (rule.count !== 1) return null;
-  // COUNT=1 stops the walk at the first match, so the window can be generous.
-  const occ = occurrencesBetween(
-    rruleStr, dtstartMs, localTime, tz, dtstartMs, dtstartMs + 400 * 86400_000,
-  );
-  return occ.length ? occ[0] : null;
+  return firstOccurrence(rruleStr, dtstartMs, localTime, tz);
+}
+
+/**
+ * The first occurrence at or after dtstart, or null if the rule yields none
+ * within a year. Used to check that a reminder will actually happen before
+ * committing it — a dated one-off whose date has passed is born dead, and
+ * silently storing it is worse than saying so.
+ */
+export function firstOccurrence(
+  rruleStr: string,
+  dtstartMs: number,
+  localTime: string,
+  tz: string,
+): number | null {
+  try {
+    // COUNT stops the walk early; otherwise the first match ends it anyway.
+    const occ = occurrencesBetween(
+      rruleStr, dtstartMs, localTime, tz, dtstartMs, dtstartMs + 400 * 86400_000,
+    );
+    return occ.length ? occ[0] : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Human-readable summary of a rule, for confirmation messages. */

@@ -158,6 +158,18 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
     return blank("pause", "keyword", { pause_minutes: parseDuration(m[1]) });
   }
 
+  // "make book flight a one-off" / "set gym to once" — the repair for a task
+  // that was created as recurring when it should only ever happen once.
+  if ((m = /^(?:make|set)\s+(.+?)\s+(?:a\s+|to\s+(?:a\s+)?)?(?:one[- ]?off|one[- ]?time|once)$/.exec(text))) {
+    return blank("update", "keyword", {
+      target: { instance_number: null, instance_id: null, task_query: m[1] },
+      task: {
+        title: null, rrule: "FREQ=DAILY;COUNT=1", local_time: null,
+        start_date: null, policy: null, overlap: null,
+      },
+    });
+  }
+
   // Speakable policies: "make gym urgent", "set trash to gentle".
   // Last, so it can't shadow the verbs above; a policy word must end the line.
   if ((m = /^(?:make|set)\s+(.+?)(?:\s+to)?\s+(gentle|urgent|quiet|notify|default)$/.exec(text))) {
@@ -206,12 +218,27 @@ Rules:
    language. Never include DTSTART. Use BYDAY with an ordinal for things like
    the last Friday of the month (BYDAY=-1FR).
 1b. ONE-TIME reminders ("remind me to X", "tomorrow at 3", "on sept 20") are
-   rrule "FREQ=DAILY;COUNT=1". Resolve "today"/"tomorrow"/weekday names into
-   start_date using the supplied now and timezone; never schedule a one-off in
-   the past — if the time today has passed, use tomorrow. If the user gives no
-   time or date at all ("soon", "at some point"), still emit the COUNT=1 rrule
-   with start_date and local_time null — the app picks a default. Do NOT ask
-   how often for a one-time reminder.
+   rrule "FREQ=DAILY;COUNT=1". ALWAYS set start_date for these — resolve
+   "today"/"tomorrow"/weekday names/"sept 20" into a YYYY-MM-DD date using the
+   supplied now and timezone. start_date is what puts the reminder on the right
+   day; without it the reminder happens today. Never schedule a one-off in the
+   past — if the time today has passed, use tomorrow. If the user gives no time
+   or date at all ("soon", "at some point"), still emit the COUNT=1 rrule with
+   start_date and local_time null — the app picks a default. Do NOT ask how
+   often for a one-time reminder.
+1c. ONE-OFF IS THE DEFAULT. Ask: "once they have done this, is it finished?"
+   Finished after one go -> one-off (FREQ=DAILY;COUNT=1):
+     book a flight, set up a doctor's appointment, register for a class,
+     renew a passport, call the bank, buy a specific thing, fix the sink,
+     plan a trip with someone, reply to an email, find someone's number.
+   Comes round again by its own nature -> recurring:
+     gym, vitamins, take out the trash, water the plants, weekly review,
+     stand-up, pay rent, weigh in.
+   Emit a RECURRING rule ONLY when the user actually said a repeating word —
+   "every", "each", "daily", "weekly", "monthly", "on Mondays", "twice a
+   week". If they said no such word, it is a one-off, even when the task
+   sounds like it might recur. "remind me to book the Thailand flight" is
+   COUNT=1; "remind me to stretch every morning" is FREQ=DAILY.
 2. Resolve relative times against the supplied now and timezone. Never assume UTC.
 3. Never invent a local_time. If the user gave no time, leave it null.
 4. Prefer overlap "stack" only for things that genuinely accumulate (paperwork,

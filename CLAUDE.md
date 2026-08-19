@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 67 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 74 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — wrangler deploy to production (owner runs this)
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
@@ -44,6 +44,10 @@ Two loops over one D1 database:
 - Identical board content is not re-edited (fingerprint), or every tick would burn an API call Telegram rejects as unmodified.
 - The board shows Missed (expired today) above Done. An item that ran out of road is the most useful thing left to report.
 - COUNT=1 is described as "once", never by its FREQ. `FREQ=DAILY;COUNT=1` is a one-off and calling it "daily" states the opposite of what will happen.
+- A dated one-off anchors dtstart to that local day. The RRULE carries no date, so dtstart IS the date — ignoring start_date fires the reminder today instead.
+- A reminder that would first land in the past is refused, never stored. COUNT=1 gives it one chance, and a spent one is indistinguishable from a scheduled one in the tasks table.
+- Converting a recurring task to a one-off re-anchors dtstart to now, or its months-old anchor would spend the single occurrence on save.
+- Confirmation prompts never invent a time. An update with no stated time describes the task's real one.
 - Spent one-offs are quarantined under "Already happened" in the tasks list. Nothing retires them (active stays 1), so listing them as live makes the whole list untrustworthy.
 
 ## Conventions

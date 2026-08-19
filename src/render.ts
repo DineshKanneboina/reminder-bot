@@ -16,6 +16,22 @@ export const shortDate = (epochMs: number, tz: string): string => {
   return `${SHORT_DAYS[p.weekday]} ${p.day} ${SHORT_MONTHS[p.month - 1]}`;
 };
 
+/**
+ * How a task's schedule reads, in one place so the creation confirmation, the
+ * edit confirmation and the tasks list can never disagree. A dated one-off
+ * says its date; anything else describes its rule.
+ */
+export function describeSchedule(
+  rrule: string,
+  dtstartMs: number,
+  localTime: string,
+  tz: string,
+): string {
+  const once = oneOffOccurrence(rrule, dtstartMs, localTime, tz);
+  if (once !== null) return `once, ${shortDate(once, tz)} at ${clockLabel(localTime)}`;
+  return describeRRule(rrule, localTime);
+}
+
 const ordinal = (n: number): string =>
   n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
 
@@ -98,7 +114,9 @@ export function renderTaskList(tasks: TaskRow[], now: number) {
     if (once === null) {
       live.push(`• <b>${esc(t.title)}</b> — ${describeRRule(t.rrule, t.local_time)}`);
     } else if (once > now) {
-      live.push(`• <b>${esc(t.title)}</b> — once, ${shortDate(once, t.timezone)} at ${clockLabel(t.local_time)}`);
+      live.push(
+        `• <b>${esc(t.title)}</b> — ${describeSchedule(t.rrule, ms(t.dtstart), t.local_time, t.timezone)}`,
+      );
     } else {
       if (!firstSpent) firstSpent = t.title;
       spent.push(`• <s>${esc(t.title)}</s> — was ${shortDate(once, t.timezone)}`);

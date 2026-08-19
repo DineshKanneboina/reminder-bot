@@ -5,9 +5,9 @@
 
 import { Db, uid } from "./db";
 import { Parsed, needsConfirmation } from "./parser";
-import { describeRRule, parseRRule } from "./rrule";
-import { renderLiveList, renderTaskList, esc } from "./render";
-import { iso, parseClock } from "./time";
+import { describeRRule, firstOccurrence, parseRRule } from "./rrule";
+import { describeSchedule, renderLiveList, renderTaskList, esc, shortDate } from "./render";
+import { clockLabel, iso, localDateStart, ms, parseClock } from "./time";
 import { Env, LiveInstance, OutboundAction, TaskRow, UserRow } from "./types";
 
 export interface Reply {
@@ -30,7 +30,13 @@ export async function applyIntent(
 ): Promise<Reply> {
   // Two-turn handshake for anything destructive or uncertain.
   if (needsConfirmation(p) && p.intent !== "unknown" && p.intent !== "confirm") {
-    const summary = summarize(p, live);
+    // An update is confirmed in terms of the real task, so resolve it first.
+    let subject: TaskRow | null = null;
+    if (p.intent === "update" && p.target.task_query) {
+      const found = await resolveTask(db, user.id, p);
+      if ("task" in found) subject = found.task;
+    }
+    const summary = summarize(p, live, user.timezone, now, subject);
     if (summary) {
       await db.putPendingAction(user.id, p, summary, 300_000, now);
       return { text: `${summary}\n\nReply <code>y</code> to confirm.` };
@@ -61,15 +67,38 @@ export async function applyIntent(
       const policy = asked ?? (await db.policy(user.default_policy_id));
       if (!policy) return { text: "No escalation policy configured — run the seed migration." };
 
+      // Anchor. An explicit date ("on september 3rd") wins; otherwise creation
+      // time, so a task made at 9am with a 6:30am rule starts tomorrow rather
+      // than instantly nagging about this morning.
+      let anchor = now;
+      if (p.task.start_date) {
+        const dated = localDateStart(p.task.start_date, user.timezone);
+        if (dated === null) return { text: "I didn't understand that date." };
+        anchor = dated;
+      }
+
+      // Refuse to store something that will never fire. A dated one-off whose
+      // date has gone is born dead, and silently keeping it is worse than
+      // saying so — it would sit in the tasks list looking scheduled forever.
+      const first = firstOccurrence(p.task.rrule, anchor, localTime, user.timezone);
+      if (first === null) {
+        return { text: "That schedule never comes round — try rephrasing the date or frequency." };
+      }
+      if (first < now) {
+        return {
+          text:
+            `That would have been ${shortDate(first, user.timezone)} at ` +
+            `${clockLabel(localTime)}, which has already passed. When should it be?`,
+        };
+      }
+
       const task: TaskRow = {
         id: uid(),
         user_id: user.id,
         title: p.task.title,
         notes: null,
         rrule: p.task.rrule,
-        // Anchor to creation time exactly. A task made at 9am with a 6:30am
-        // rule starts tomorrow rather than instantly nagging about this morning.
-        dtstart: iso(now),
+        dtstart: iso(anchor),
         local_time: localTime,
         timezone: user.timezone,
         policy_id: policy.id,
@@ -81,7 +110,9 @@ export async function applyIntent(
       await db.insertTask(task);
       const styled = asked ? ` · <i>${esc(asked.name)}</i>` : "";
       return {
-        text: `✅ <b>${esc(task.title)}</b> — ${describeRRule(task.rrule, task.local_time)}${styled}`,
+        text:
+          `✅ <b>${esc(task.title)}</b> — ` +
+          `${describeSchedule(task.rrule, anchor, task.local_time, task.timezone)}${styled}`,
       };
     }
 
@@ -100,6 +131,9 @@ export async function applyIntent(
       }
       const t = validClock(p.task.local_time);
       if (t) fields.local_time = t;
+      if (p.task.start_date && localDateStart(p.task.start_date, match.task.timezone) === null) {
+        return { text: "I didn't understand that date." };
+      }
       if (p.task.overlap) fields.overlap = p.task.overlap;
       if (p.task.policy) {
         const pol = await db.policyByName(user.id, p.task.policy);
@@ -108,20 +142,30 @@ export async function applyIntent(
         }
         fields.policy_id = pol.id;
       }
-      if (Object.keys(fields).length === 0) return { text: "Nothing to change." };
+      const mergedRule = fields.rrule ?? match.task.rrule;
+      const mergedTime = fields.local_time ?? match.task.local_time;
+      const anchor = anchorFor(p, match.task, mergedRule, mergedTime, now);
+      if (anchor !== ms(match.task.dtstart)) fields.dtstart = iso(anchor);
 
+      if (Object.keys(fields).length === 0) return { text: "Nothing to change." };
       await db.updateTask(match.task.id, fields);
       // Only a schedule change invalidates what's already materialized. A
       // policy change must NOT supersede: the live instances join their policy
       // through the task, so they pick up the new one on the next tick — and
       // superseding here would silently drop whatever is open right now.
-      if (fields.rrule !== undefined || fields.local_time !== undefined) {
+      if (
+        fields.rrule !== undefined ||
+        fields.local_time !== undefined ||
+        fields.dtstart !== undefined
+      ) {
         await db.supersedeAll(match.task.id);
       }
       const merged = { ...match.task, ...fields };
       const styled = p.task.policy ? ` · <i>${esc(p.task.policy)}</i>` : "";
       return {
-        text: `✏️ <b>${esc(merged.title)}</b> — ${describeRRule(merged.rrule, merged.local_time)}${styled}`,
+        text:
+          `✏️ <b>${esc(merged.title)}</b> — ` +
+          `${describeSchedule(mergedRule, anchor, mergedTime, match.task.timezone)}${styled}`,
       };
     }
 
@@ -238,19 +282,71 @@ async function resolveInstance(
 
 // ------------------------------------------------------------------ helpers
 
-function summarize(p: Parsed, live: LiveInstance[]): string | null {
+function summarize(
+  p: Parsed,
+  live: LiveInstance[],
+  tz: string,
+  now: number,
+  task: TaskRow | null,
+): string | null {
   switch (p.intent) {
-    case "create":
+    case "create": {
       if (!p.task.title || !p.task.rrule) return null;
-      return `Create <b>${esc(p.task.title)}</b> — ${describeRRule(p.task.rrule, validClock(p.task.local_time) ?? DEFAULT_TIME)}?`;
-    case "update":
-      return `Change <b>${esc(p.target.task_query ?? "")}</b>${p.task.rrule ? ` to ${describeRRule(p.task.rrule, validClock(p.task.local_time) ?? DEFAULT_TIME)}` : ""}?`;
+      const clock = validClock(p.task.local_time) ?? DEFAULT_TIME;
+      const anchor = (p.task.start_date && localDateStart(p.task.start_date, tz)) || now;
+      return `Create <b>${esc(p.task.title)}</b> — ${describeSchedule(p.task.rrule, anchor, clock, tz)}?`;
+    }
+    case "update": {
+      // Never invent a time here. Falling back to DEFAULT_TIME told the user
+      // "to once at 9:00 am" for a task that actually fires at 21:00 — a
+      // confirmation prompt that misstates the change is worse than none.
+      if (!task) return `Change <b>${esc(p.target.task_query ?? "")}</b>?`;
+      const rule = p.task.rrule ?? task.rrule;
+      const time = validClock(p.task.local_time) ?? task.local_time;
+      const anchor = anchorFor(p, task, rule, time, now);
+      return `Change <b>${esc(task.title)}</b> to ${describeSchedule(rule, anchor, time, task.timezone)}?`;
+    }
     case "delete":
       return `Delete <b>${esc(p.target.task_query ?? "")}</b>? This stops all future reminders for it.`;
     case "set_timezone":
       return `Set your timezone to <b>${esc(p.timezone ?? "")}</b>?`;
     default:
       return null;
+  }
+}
+
+/**
+ * Where an edited task's schedule should be anchored.
+ *
+ * An explicit date always wins. Otherwise the existing anchor stands — except
+ * when the task is becoming a one-off, where a months-old dtstart would put
+ * the single occurrence COUNT=1 allows in the past, spending the reminder the
+ * moment it is saved. With no date given, "once" means the next time that hour
+ * comes round.
+ */
+function anchorFor(
+  p: Parsed,
+  task: TaskRow,
+  rule: string,
+  localTime: string,
+  now: number,
+): number {
+  if (p.task.start_date) {
+    const dated = localDateStart(p.task.start_date, task.timezone);
+    if (dated !== null) return dated;
+  }
+  if (isOneOffRule(rule)) {
+    const first = firstOccurrence(rule, ms(task.dtstart), localTime, task.timezone);
+    if (first === null || first < now) return now;
+  }
+  return ms(task.dtstart);
+}
+
+function isOneOffRule(rrule: string): boolean {
+  try {
+    return parseRRule(rrule).count === 1;
+  } catch {
+    return false;
   }
 }
 

@@ -169,7 +169,7 @@ export class Db {
   }
 
   async updateTask(id: string, fields: Partial<TaskRow>): Promise<void> {
-    const allowed = ["title", "notes", "rrule", "local_time", "policy_id", "overlap", "active"];
+    const allowed = ["title", "notes", "rrule", "dtstart", "local_time", "policy_id", "overlap", "active"];
     const sets: string[] = [];
     const vals: unknown[] = [];
     for (const [k, v] of Object.entries(fields)) {
