@@ -51,6 +51,7 @@ const SYSTEM = [
   "5. One concrete action only: open something, find something, move something, write one line, send one message.",
   "6. If a note is given, build the step out of what the note says.",
   "7. The more times they have ignored it, the smaller your step should be.",
+  "8. If the task is only two or three words, it is a label, not instructions. Infer the most likely concrete first move rather than echoing the label back.",
   "",
   "Examples:",
   "Task: Cancel the gym membership",
@@ -66,6 +67,9 @@ const SYSTEM = [
   "",
   "Task: Reply to Sam",
   "→ Open the thread and read his last message.",
+  "",
+  "Task: taxes",
+  "→ Find last year's return and open it.",
 ].join("\n");
 
 export interface HintSubject {
@@ -106,7 +110,14 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
       raw && typeof raw === "object" && "response" in raw
         ? String((raw as { response: unknown }).response ?? "")
         : "";
-    return sanitize(text, task.title);
+    const clean = sanitize(text, task.title);
+    if (!clean && text.trim()) {
+      // A drop is as invisible as a timeout unless it says so. Log what the
+      // model actually said: "why did this one nag lose its hint" is otherwise
+      // unanswerable after the fact, and the answer is usually in the output.
+      console.warn("hint dropped", { title: task.title, raw: text.trim().slice(0, 120) });
+    }
+    return clean;
   } catch (e) {
     // Model unavailable, bad model id, quota exhausted, malformed response —
     // all the same outcome for the nag. Logged rather than swallowed silently:
