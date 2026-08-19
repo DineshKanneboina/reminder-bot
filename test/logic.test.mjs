@@ -154,15 +154,15 @@ test("rrule parser rejects garbage loudly", () => {
 });
 
 test("describeRRule is readable", () => {
-  assert.equal(describeRRule("FREQ=WEEKLY;BYDAY=MO,WE,FR", "06:30"), "Mon/Wed/Fri at 06:30");
-  assert.equal(describeRRule("FREQ=DAILY", "08:00"), "daily at 08:00");
+  assert.equal(describeRRule("FREQ=WEEKLY;BYDAY=MO,WE,FR", "06:30"), "Mon/Wed/Fri at 6:30 am");
+  assert.equal(describeRRule("FREQ=DAILY", "08:00"), "daily at 8:00 am");
 });
 
 test("a one-off is never described as recurring", () => {
   // COUNT=1 is how the parser encodes "remind me to X tomorrow". Calling that
   // "daily" tells the user the opposite of what will happen.
-  assert.equal(describeRRule("FREQ=DAILY;COUNT=1", "18:00"), "once at 18:00");
-  assert.equal(describeRRule("FREQ=WEEKLY;BYDAY=TH;COUNT=1", "18:00"), "once at 18:00");
+  assert.equal(describeRRule("FREQ=DAILY;COUNT=1", "18:00"), "once at 6:00 pm");
+  assert.equal(describeRRule("FREQ=WEEKLY;BYDAY=TH;COUNT=1", "18:00"), "once at 6:00 pm");
 });
 
 test("oneOffOccurrence finds the single landing, and only for one-offs", () => {
@@ -203,8 +203,8 @@ test("the tasks list separates what will happen again from what already did", ()
     now,
   );
 
-  assert.match(out, /water plants<\/b> — daily at 18:00/);
-  assert.match(out, /book flight<\/b> — once, Mon 17 Aug at 18:00/);
+  assert.match(out, /water plants<\/b> — daily at 6:00 pm/);
+  assert.match(out, /book flight<\/b> — once, Mon 17 Aug at 6:00 pm/);
 
   // The one that already fired is quarantined, not listed as if it were live.
   assert.match(out, /<b>Already happened<\/b>/);

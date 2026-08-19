@@ -12,7 +12,7 @@
  * UNTIL.
  */
 
-import { LocalParts, localToUtc, parseClock, toLocalParts } from "./time";
+import { LocalParts, clockLabel, localToUtc, parseClock, toLocalParts } from "./time";
 
 const DAY_CODES = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 
@@ -251,7 +251,7 @@ export function describeRRule(rruleStr: string, localTime: string): string {
   const r = parseRRule(rruleStr);
   // Describing a one-off by its FREQ says the opposite of what will happen:
   // "FREQ=DAILY;COUNT=1" is not "daily", it is exactly once.
-  if (r.count === 1) return `once at ${localTime}`;
+  if (r.count === 1) return `once at ${clockLabel(localTime)}`;
   const days = r.byDay
     .map((d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.weekday])
     .join("/");
@@ -275,5 +275,5 @@ export function describeRRule(rruleStr: string, localTime: string): string {
       base = "yearly";
       break;
   }
-  return `${base.trim()} at ${localTime}`;
+  return `${base.trim()} at ${clockLabel(localTime)}`;
 }

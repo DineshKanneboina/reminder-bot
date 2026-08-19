@@ -153,6 +153,27 @@ export function pushPastQuietHours(
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
+/**
+ * Wall-clock times are READ by a person, so they are rendered the way that
+ * person says them: "8:00 am", not "08:00". Storage stays 24h ('HH:MM') —
+ * this is a presentation concern only.
+ */
+export function formatClock(hour: number, minute: number): string {
+  const suffix = hour < 12 ? "am" : "pm";
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}:${pad(minute)} ${suffix}`;
+}
+
+/** 'HH:MM' -> '8:00 am'. Falls back to the raw value rather than throwing. */
+export function clockLabel(hhmm: string): string {
+  try {
+    const [h, m] = parseClock(hhmm);
+    return formatClock(h, m);
+  } catch {
+    return hhmm;
+  }
+}
+
 /** YYYY-MM-DD as it reads on a wall calendar in `tz`. The board is keyed by this. */
 export function localDateString(epochMs: number, tz: string): string {
   const p = toLocalParts(epochMs, tz);

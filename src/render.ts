@@ -1,10 +1,10 @@
 import { describeRRule, oneOffOccurrence } from "./rrule";
-import { ms, toLocalParts } from "./time";
+import { clockLabel, formatClock, ms, toLocalParts } from "./time";
 import { LiveInstance, OutboundAction, TaskRow } from "./types";
 
 export const clock = (isoStr: string, tz: string): string => {
   const p = toLocalParts(Date.parse(isoStr), tz);
-  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+  return formatClock(p.hour, p.minute);
 };
 
 const SHORT_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -98,7 +98,7 @@ export function renderTaskList(tasks: TaskRow[], now: number) {
     if (once === null) {
       live.push(`• <b>${esc(t.title)}</b> — ${describeRRule(t.rrule, t.local_time)}`);
     } else if (once > now) {
-      live.push(`• <b>${esc(t.title)}</b> — once, ${shortDate(once, t.timezone)} at ${t.local_time}`);
+      live.push(`• <b>${esc(t.title)}</b> — once, ${shortDate(once, t.timezone)} at ${clockLabel(t.local_time)}`);
     } else {
       if (!firstSpent) firstSpent = t.title;
       spent.push(`• <s>${esc(t.title)}</s> — was ${shortDate(once, t.timezone)}`);

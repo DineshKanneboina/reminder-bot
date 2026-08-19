@@ -229,9 +229,39 @@ test("the board says what was missed today, not just what was done", async () =>
   const [edit] = edits();
   assert.ok(edit, "the board was updated when it ran out of road");
   assert.match(edit.text, /<b>Missed<\/b>/);
-  assert.match(edit.text, /take out trash · was 09:00/);
+  assert.match(edit.text, /take out trash · was 9:00 am/);
   assert.doesNotMatch(edit.text, /<b>Due<\/b>/, "it is no longer open");
   assert.doesNotMatch(edit.text, /<b>Done<\/b>/, "and it was certainly not done");
+});
+
+test("a carried-over item is dated, so it cannot read as today", async () => {
+  // The real confusion this fixes: an 18:00 item left open overnight sat in
+  // Due as "18:00" on a board headed with today's date, while today's fresh
+  // 18:00 occurrence sat in Later today. Same title, same clock time, one of
+  // them a day old, and nothing on the board said which.
+  seedTask("18:00", { id: "t1", title: "plan Thailand" });
+  const morning = localToUtc(2026, 8, 12, 8, 40, TZ);
+  const lastNight = localToUtc(2026, 8, 11, 18, 0, TZ);
+  const threeNights = localToUtc(2026, 8, 9, 18, 0, TZ);
+  const tonight = localToUtc(2026, 8, 12, 18, 0, TZ);
+
+  d1.exec(`
+    INSERT INTO reminder_instances VALUES
+      ('i_old','t1','u1','${iso(threeNights)}','notified',3,4,NULL,'${iso(morning + HOUR)}',NULL,NULL),
+      ('i_last','t1','u1','${iso(lastNight)}','notified',11,4,NULL,'${iso(morning + HOUR)}',NULL,NULL),
+      ('i_tonight','t1','u1','${iso(tonight)}','pending',0,0,'${iso(tonight)}','${iso(tonight + 3 * HOUR)}',NULL,NULL);
+  `);
+
+  const db = new Db(d1);
+  await syncBoard(env, db, await db.user("u1"), morning);
+
+  const [board] = boards();
+  assert.match(board.text, /Wednesday, 12 Aug/);
+  // Carried over: dated, and still numbered for `done 1` / `done 2`.
+  assert.match(board.text, /1\. <b>plan Thailand<\/b> · Sun 9 Aug 6:00 pm/);
+  assert.match(board.text, /2\. <b>plan Thailand<\/b> · yesterday 6:00 pm · 11×/);
+  // Tonight's is today, so it stays a bare time under Later today.
+  assert.match(board.text, /<b>Later today<\/b>\n• plan Thailand · 6:00 pm/);
 });
 
 test("an unchanged board is not re-edited on every tick", async () => {
