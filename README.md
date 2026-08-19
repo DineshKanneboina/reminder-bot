@@ -111,9 +111,9 @@ so there's nothing to resolve.
 
 ## How loudly
 
-Recurring tasks are quiet by default: they appear on the board and say nothing
-for four hours, then nag on their ladder. A one-off is different — you named a
-time, so it pushes at that time and then nags normally if you ignore it.
+Everything speaks at its due time and then nags on its ladder. The board is the
+day's view rather than a delay: `QUIET_AGING_HOURS` can hold recurring tasks
+back on the board for a while first, but production runs it at zero.
 
 Change any of it per task:
 
@@ -215,7 +215,7 @@ Set in `wrangler.jsonc` under `vars`:
 | `HINTS_ENABLED` | on | set to `0` to stop generating first-step hints |
 | `HINT_MODEL` | `@cf/meta/llama-3.2-3b-instruct` | Workers AI model for hints — check `npx wrangler ai models` |
 | `HINT_BUDGET_PER_TICK` | `3` | most hints one tick will generate |
-| `QUIET_AGING_HOURS` | `4` | how long a quiet item sits on the board before it nags |
+| `QUIET_AGING_HOURS` | `0` in production (code default `4`) | how long a recurring item sits on the board before it nags |
 | `BOARD_HOUR` | `07:00` | when an otherwise-empty board is posted |
 | `BOARD_ENABLED` | on | set to `0` to turn the board off entirely |
 | `MATERIALIZE_HORIZON_HOURS` | `48` | how far ahead occurrences are created |
@@ -325,7 +325,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 95 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 97 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run check     # the deploy gate, minus the checks that need network
 npm run dev       # local worker + local D1

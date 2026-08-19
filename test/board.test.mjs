@@ -418,3 +418,33 @@ test("'just notify me' style words map onto the notify policy", async () => {
   assert.equal(nags().length, 1);
   assert.equal(instances()[0].next_nag_at, null);
 });
+
+test("QUIET_AGING_HOURS=0 makes a recurring task speak at its due time", async () => {
+  // What production runs. The quiet window is still implemented and still
+  // honours quiet hours — it is just set to zero, so nothing is parked.
+  env.QUIET_AGING_HOURS = "0";
+  seedTask("09:00");
+
+  const r = await runTick(env, T0);
+  assert.equal(r.parked, 0, "nothing waits");
+  assert.equal(r.sent, 1);
+  assert.match(nags()[0].text, /take out trash/);
+
+  // And the ladder is untouched: first rung is 10 minutes.
+  assert.equal(Date.parse(instances()[0].next_nag_at), T0 + 10 * 60_000);
+});
+
+test("a zero window still refuses to speak during quiet hours", async () => {
+  // Zero aging must not become a licence to nag at 23:30.
+  env.QUIET_AGING_HOURS = "0";
+  seedTask("23:30");
+  const lateNight = localToUtc(2026, 8, 11, 23, 30, TZ);
+
+  const r = await runTick(env, lateNight);
+  assert.equal(r.sent, 0);
+  assert.equal(
+    Date.parse(instances()[0].next_nag_at),
+    localToUtc(2026, 8, 12, 7, 0, TZ),
+    "deferred to the end of the quiet window, as before",
+  );
+});

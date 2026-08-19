@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 95 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 97 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -80,7 +80,7 @@ Three layers, in order. Each exists because something got past the previous one.
 Decisions the owner settled, and what they mean in code:
 
 - **Fresh board message each morning**, chat becomes a daily log. Posted at the first tick past `BOARD_HOUR` (default 07:00 local) or sooner if there is already something to show; yesterday's is unpinned and left in the chat. Keyed by local date in `boards`. (Option B web /board page still deferred.)
-- **Quiet by default**: every tier except `urgent` is board-only until an item ages past `QUIET_AGING_HOURS` (default **4**), then it nags on its normal ladder. This applies to existing tasks — `pol_default` and `pol_gentle` are tier `quiet`. **One-offs are exempt** (settled 19 Aug, after a timed one-off sat silent for four hours): a chosen moment pushes on time, then ladders normally.
+- **Quiet by default**: every tier except `urgent` is board-only until an item ages past `QUIET_AGING_HOURS`, then it nags on its normal ladder. **Production runs 0** (set in wrangler.jsonc): one day of real use showed a 9am task going silent until 1pm was worse than the noise the window avoided, and the board already covers "show me without spamming me". The mechanism stays — it still honours quiet hours at zero — so raising it is a one-line change. This applies to existing tasks — `pol_default` and `pol_gentle` are tier `quiet`. **One-offs are exempt** (settled 19 Aug, after a timed one-off sat silent for four hours): a chosen moment pushes on time, then ladders normally.
 - **`notify` tier** = one push, empty ladder, no follow-ups (`pol_notify`).
 - Speakable policies work on create and update, via a keyword regex ("make gym urgent") before the LLM ever sees it.
 - `BOARD_ENABLED=0` is a kill switch. tick.test.mjs and inbound.test.mjs set it — they pin the escalation machine and a second message per tick would muddy every send count. Board behaviour lives in board.test.mjs.
