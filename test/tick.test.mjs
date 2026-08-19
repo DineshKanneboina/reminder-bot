@@ -83,8 +83,9 @@ test("materializes the 48h horizon and claims only what is due", async () => {
   const rows = instances();
   assert.equal(rows[0].state, "notified");
   assert.equal(rows[0].attempt_count, 1);
-  // 'default' ladder is [10,20,40,60]; step 1 means the next nag is +20m.
-  assert.equal(Date.parse(rows[0].next_nag_at), T0 + 20 * 60_000);
+  // Ladder is [10,20,40,60] and the first nag has just gone out, so the next
+  // one is its first rung: +10m. Every rung is used, in order.
+  assert.equal(Date.parse(rows[0].next_nag_at), T0 + 10 * 60_000);
   // Future occurrences stay pending and untouched.
   assert.deepEqual(rows.slice(1).map((x) => x.state), ["pending"]);
 });
@@ -103,20 +104,39 @@ test("a second tick at the same instant is a no-op", async () => {
 
 test("nags escalate through the ladder, then expire", async () => {
   seedTask("09:00");
-  await runTick(env, T0); // fire 1
-  await runTick(env, T0 + 20 * 60_000); // fire 2
-  await runTick(env, T0 + 60 * 60_000); // fire 3
-  await runTick(env, T0 + 120 * 60_000); // fire 4 — ladder exhausted
+  // [10,20,40,60] means gaps of 10, 20, 40 and 60 minutes after each nag, so
+  // five nags land at 0, 10, 30, 70 and 130 minutes. Every rung is spent.
+  const fires = [0, 10, 30, 70, 130];
+  for (const m of fires) await runTick(env, T0 + m * 60_000);
 
   const row = instances()[0];
-  assert.equal(row.attempt_count, 4);
+  assert.equal(row.attempt_count, 5, "one nag per rung, plus the first");
   assert.equal(row.next_nag_at, null, "ladder exhausted must null next_nag_at");
-  assert.equal(sent.filter((s) => s.kind === "telegram").length, 4);
-  assert.match(sent[3].text, /4th nudge/);
+  assert.equal(sent.filter((s) => s.kind === "telegram").length, 5);
+  assert.match(sent[4].text, /5th nudge/);
 
   // Nulled next_nag_at means it is never picked up again.
   await runTick(env, T0 + 200 * 60_000);
-  assert.equal(sent.filter((s) => s.kind === "telegram").length, 4);
+  assert.equal(sent.filter((s) => s.kind === "telegram").length, 5);
+});
+
+test("every rung of the ladder is used, in the order it is written", async () => {
+  // The regression this pins: reading the raw escalation_step skipped
+  // ladder[0], so a policy declaring [10,20,40,60] actually nagged at
+  // 20/40/60 and gave up a nag early. The first number was dead config.
+  d1.exec(`INSERT INTO escalation_policies
+    (id,user_id,name,ladder_minutes,channel_ladder,give_up_after_minutes,quiet_start,quiet_end,max_concurrent,tier)
+    VALUES ('pol_steps',NULL,'steps','[7,13,29]','["primary"]',600,NULL,NULL,4,'urgent');`);
+  seedTask("09:00", { policy: "pol_steps" });
+
+  const at = [0];
+  for (let m = 0; m <= 60; m++) {
+    const before = sent.filter((s) => s.kind === "telegram").length;
+    await runTick(env, T0 + m * 60_000);
+    if (sent.filter((s) => s.kind === "telegram").length > before && m > 0) at.push(m);
+  }
+  assert.deepEqual(at, [0, 7, 20, 49], "gaps of 7, 13 and 29 — exactly as declared");
+  assert.equal(instances()[0].next_nag_at, null);
 });
 
 test("give_up_at expires a chain whose next nag falls past the window", async () => {

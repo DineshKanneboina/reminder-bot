@@ -159,14 +159,21 @@ export function pushAt(inst: LiveInstance, agingMs: number): number {
 }
 
 /**
- * Where the next nag lands: current step's ladder entry, pushed out of quiet
- * hours, clamped to give_up_at. Returns null when the ladder is exhausted,
- * which is what ends the chain.
+ * Where the next nag lands: this nag's ladder entry, pushed out of quiet hours,
+ * clamped to give_up_at. Returns null when the ladder is exhausted, which is
+ * what ends the chain.
+ *
+ * The claim has already incremented escalation_step, so the nag that just went
+ * out is number `escalation_step` and its gap is `ladder[escalation_step - 1]`.
+ * Reading the raw step instead skipped ladder[0] entirely: a [10,20,40,60]
+ * ladder produced gaps of 20/40/60 and one nag fewer than it declares. The
+ * channel ladder a few lines below has always indexed on step - 1, so the two
+ * halves of the same policy disagreed about which nag they were on.
  */
 export function nextNagAt(inst: LiveInstance, now: number): string | null {
   const ladder = safeJson<number[]>(inst.ladder_minutes, [10, 20, 40, 60]);
-  const step = inst.escalation_step; // already incremented by the claim
-  if (step >= ladder.length) return null;
+  const step = inst.escalation_step - 1;
+  if (step < 0 || step >= ladder.length) return null;
 
   let next = now + ladder[step] * 60_000;
   next = pushPastQuietHours(next, inst.timezone, inst.quiet_start, inst.quiet_end);

@@ -45,7 +45,12 @@ export async function applyIntent(
 
   switch (p.intent) {
     case "confirm": {
-      const pending = await db.takePendingAction(user.id);
+      // The injected clock, not Date.now(): putPendingAction stamped expires_at
+      // from `now`, so checking it against wall-clock time compares two
+      // different clocks. Harmless in production where they agree, but it made
+      // the confirm path untestable — a y-confirmation appeared to expire or
+      // not depending on what time the suite happened to run.
+      const pending = await db.takePendingAction(user.id, now);
       if (!pending) return { text: "Nothing waiting for confirmation." };
       const confirmed: Parsed = { ...pending.payload, confidence: 1, source: "button" };
       return applyIntent(confirmed, user, db, env, live, now);

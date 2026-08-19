@@ -299,7 +299,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 74 tests: date logic, tick lifecycle, board, one-offs, webhooks
+npm test          # 75 tests: date logic, tick lifecycle, board, one-offs, webhooks
 npm run typecheck
 npm run dev       # local worker + local D1
 ```
@@ -319,6 +319,7 @@ with simulated time.
 - An explicit snooze extends `give_up_at` rather than being silently killed by it.
 - A quiet item waiting on the board keeps its full ladder, and its give-up window
   is stretched past the wait rather than consumed by it.
+- Every rung of a policy's ladder is used, in the order it is written.
 - The board is a view: a failed post or edit never costs a nag or fails the tick.
 - A dated one-off lands on its date, and one whose date has passed is refused
   rather than stored where it can never fire.

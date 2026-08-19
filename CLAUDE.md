@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 74 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 75 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — wrangler deploy to production (owner runs this)
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
@@ -26,6 +26,8 @@ Two loops over one D1 database:
 
 - Terminal instance states always have next_nag_at NULL — that column IS the state machine; the scheduler queries nothing else.
 - Claiming uses a 2-minute lease, never NULL, so a crashed send self-retries.
+- The ladder is indexed by `escalation_step - 1`, because the claim already incremented it. Both ladders — timing and channel — must index the same way, or a policy disagrees with itself about which nag it is on.
+- Every rung of ladder_minutes is used, in order. A declared [10,20,40,60] nags five times with those exact gaps.
 - 08:00 local stays 08:00 local across both DST transitions; spring-forward gap times fire exactly once.
 - Supersede runs at fire time, not materialization time (materializing tomorrow must never retire today before it nags).
 - liveForUser filters scheduled_for <= now — numbered replies must never reach future occurrences.
@@ -53,7 +55,7 @@ Two loops over one D1 database:
 ## Conventions
 
 - All timestamps stored as ISO-8601 UTC strings; local time computed against IANA zones at use, never stored offsets.
-- Clock is injected (`now` param) through commands/tick so tests drive simulated time. Never reach for Date.now() inside handlers.
+- Clock is injected (`now` param) through commands/tick so tests drive simulated time. Never reach for Date.now() inside handlers — and pass `now` down into db calls that compare against it (pending_actions, dialog_state), or the two clocks silently disagree.
 - Owner deploys via patch-and-deploy; keep changes test-covered — every bug fixed so far got a regression test replaying the real conversation that found it.
 - Secrets via wrangler secret (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, ACK_SIGNING_KEY, BOOTSTRAP_TOKEN, ANTHROPIC_API_KEY, HEARTBEAT_URL). Never print or commit them.
 

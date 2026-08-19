@@ -119,11 +119,11 @@ test("a quiet reminder starts nagging once it ages past the window", async () =>
   assert.doesNotMatch(nag.text, /nudge/, "the quiet wait must not read as a nudge");
 
   // None of the ladder was spent waiting: this is indistinguishable from an
-  // ordinary first nag, which lands its follow-up one rung in at +20m.
+  // ordinary first nag, so the follow-up comes at the ladder's first rung.
   const row = instances()[0];
   assert.equal(row.attempt_count, 1);
   assert.equal(row.escalation_step, 1);
-  assert.equal(Date.parse(row.next_nag_at), T0 + 4 * HOUR + 20 * 60_000);
+  assert.equal(Date.parse(row.next_nag_at), T0 + 4 * HOUR + 10 * 60_000);
 });
 
 test("the give-up window is stretched past the quiet wait, not consumed by it", async () => {
