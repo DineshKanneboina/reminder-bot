@@ -79,6 +79,9 @@ test("model output is reduced to one plain line, or dropped", () => {
   assert.equal(sanitize("Sure! Here's a first step: open the box"), null);
   assert.equal(sanitize("   "), null);
   assert.equal(sanitize("ok"), null, "too short to be a step");
+  // Small models copy the arrow format used by the examples in the prompt.
+  assert.equal(sanitize("→ Open the toolbox"), "Open the toolbox");
+  assert.equal(sanitize("Reply: Open the toolbox"), "Open the toolbox");
 
   const long = sanitize("Take " + "a very deliberate step ".repeat(20));
   assert.ok(long.length <= 91, "capped");
@@ -257,4 +260,34 @@ test("a tick that sends but never hints is visible in the report", async () => {
   const r = await runTick(env, T0);
   assert.equal(r.sent, 1);
   assert.equal(r.hinted, 0, "sent > 0 with hinted 0 is the broken-model signature");
+});
+
+test("a hint that only restates the task is dropped", () => {
+  // The failure this kills: a "first step" that is the task again, at the same
+  // altitude, telling you nothing the nag did not already say.
+  assert.equal(sanitize("Build the shelf.", "Build shelf"), null);
+  assert.equal(sanitize("Start building the shelf", "Build shelf"), null);
+  assert.equal(sanitize("Update your resume.", "update resume"), null);
+
+  // Anything that adds a real action survives.
+  assert.equal(
+    sanitize("Open last year's version and read the top.", "update resume"),
+    "Open last year's version and read the top.",
+  );
+  assert.equal(
+    sanitize("Check the cupboard for the old tub.", "Buy protein powder"),
+    "Check the cupboard for the old tub.",
+  );
+  // With no title to compare against, nothing is dropped on this rule.
+  assert.equal(sanitize("Build the shelf."), "Build the shelf.");
+});
+
+test("the restatement rule reaches the send path", async () => {
+  seedTask({ title: "Build shelf" });
+  env.AI = fakeAI({ response: "Build the shelf." });
+
+  const r = await runTick(env, T0);
+  assert.equal(r.sent, 1, "the nag still goes out");
+  assert.equal(r.hinted, 0, "but carries no hint");
+  assert.doesNotMatch(nags()[0], /💡/);
 });

@@ -325,7 +325,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 93 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 95 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run check     # the deploy gate, minus the checks that need network
 npm run dev       # local worker + local D1

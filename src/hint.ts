@@ -29,11 +29,44 @@ const MAX_TOKENS = 40;
 const MAX_CHARS = 90;
 const MIN_CHARS = 4;
 
-const SYSTEM =
-  "You suggest the smallest possible first step for a task someone keeps " +
-  "putting off. Reply with ONE short imperative sentence, under 12 words. " +
-  "No preamble, no quotes, no markdown, no explanation. If the task is " +
-  "already small, restate it as one concrete physical action.";
+/**
+ * Written against real output, not guesses. The first version produced "Go to
+ * the grocery store" for "Buy protein powder" — a restatement at the same
+ * altitude, not a smaller step — and "Open Microsoft Word and start a new
+ * document" for "update resume", inventing an app the user may not own. Rules
+ * 2, 3 and 4 exist for exactly those two failures.
+ *
+ * Examples deliberately use tasks the owner does not have. A 3b model will
+ * happily echo an example verbatim when it recognises the title, which would
+ * look like a good hint while teaching us nothing.
+ */
+const SYSTEM = [
+  "You help someone start a task they keep putting off. Reply with the single smallest first move.",
+  "",
+  "Rules:",
+  "1. ONE imperative sentence, under 12 words. No preamble, quotes, markdown or explanation.",
+  "2. It must be SMALLER than the task and doable in under two minutes, right now. You are breaking inertia, not describing the job.",
+  "3. Never restate the task. For \"Build shelf\", \"Build the shelf\" is useless.",
+  "4. Never name an app, shop, brand or website unless the note names it. You do not know what they use.",
+  "5. One concrete action only: open something, find something, move something, write one line, send one message.",
+  "6. If a note is given, build the step out of what the note says.",
+  "7. The more times they have ignored it, the smaller your step should be.",
+  "",
+  "Examples:",
+  "Task: Cancel the gym membership",
+  "→ Find the membership email and open it.",
+  "",
+  "Task: Write Ana's birthday card",
+  "Why it matters: it has to be posted by Friday",
+  "→ Put the card and a pen on the kitchen table.",
+  "",
+  "Task: Fix the leaking tap",
+  "They have ignored this 6 times.",
+  "→ Put a bucket under the pipe.",
+  "",
+  "Task: Reply to Sam",
+  "→ Open the thread and read his last message.",
+].join("\n");
 
 export interface HintSubject {
   title: string;
@@ -73,7 +106,7 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
       raw && typeof raw === "object" && "response" in raw
         ? String((raw as { response: unknown }).response ?? "")
         : "";
-    return sanitize(text);
+    return sanitize(text, task.title);
   } catch (e) {
     // Model unavailable, bad model id, quota exhausted, malformed response —
     // all the same outcome for the nag. Logged rather than swallowed silently:
@@ -103,8 +136,10 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
  * instruction — silently, because a missing hint is invisible while a mangled
  * one is worse than nothing.
  */
-export function sanitize(raw: string): string | null {
+export function sanitize(raw: string, title = ""): string | null {
   let s = raw.replace(/\s+/g, " ").trim();
+  // The examples in SYSTEM are arrow-prefixed; small models copy the format.
+  s = s.replace(/^\s*(→|->|reply:)\s*/i, "");
   s = s.replace(/^["'`*_\s]+|["'`*_\s]+$/g, "");
   if (s.length < MIN_CHARS) return null;
 
@@ -116,9 +151,45 @@ export function sanitize(raw: string): string | null {
     return null;
   }
 
+  // A hint whose content words all appear in the title says nothing the nag did
+  // not already say. "Build shelf" → "Build the shelf" is the shape to kill.
+  if (title) {
+    const words = contentWords(s);
+    const fromTitle = contentWords(title);
+    if (words.size > 0 && [...words].every((w) => fromTitle.has(w))) return null;
+  }
+
   if (s.length > MAX_CHARS) {
     s = s.slice(0, MAX_CHARS).replace(/\s+\S*$/, "").trimEnd() + "…";
     if (s.length < MIN_CHARS) return null;
   }
   return s;
+}
+
+/** Words that carry meaning, for telling a real step from a restatement. */
+const FILLER = new Set([
+  "the", "a", "an", "to", "and", "of", "your", "my", "it", "its", "this", "that",
+  "for", "on", "in", "at", "with", "then", "just", "start", "starting", "first",
+  "go", "get", "do", "make", "take", "one", "some", "up", "out", "now",
+]);
+
+/** Crude suffix stripping, so "building the shelf" still reads as "Build shelf". */
+function stem(word: string): string {
+  for (const suffix of ["ing", "ed", "es", "s"]) {
+    if (word.endsWith(suffix) && word.length - suffix.length >= 3) {
+      return word.slice(0, -suffix.length);
+    }
+  }
+  return word;
+}
+
+function contentWords(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 1 && !FILLER.has(w))
+      .map(stem),
+  );
 }
