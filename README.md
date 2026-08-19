@@ -327,8 +327,16 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 ```bash
 npm test          # 93 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
+npm run check     # the deploy gate, minus the checks that need network
 npm run dev       # local worker + local D1
 ```
+
+`npm run deploy` is gated. `predeploy` runs typecheck, the suite, and six
+project-specific checks — is the Workers AI model id real, is every parsed field
+actually consumed, does any handler read the wall clock, has `schema.sql` drifted
+ahead of the remote database, do the test counts in the docs still match. A
+failure stops the deploy. Afterwards `postdeploy` waits one cron tick and
+smoke-tests production.
 
 Tests run against an in-memory SQLite shim (`test/d1-shim.mjs`) rather than
 workerd, so the whole suite runs in about a second and the tick can be driven

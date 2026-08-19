@@ -6,7 +6,9 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 - `npm test` — 93 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
-- `npm run deploy` — wrangler deploy to production (owner runs this)
+- `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
+- `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
+- `npm run smoke` — the post-deploy checks without waiting for a tick
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
 
 ## Architecture (src/)
@@ -57,6 +59,14 @@ Two loops over one D1 database:
 - Converting a recurring task to a one-off re-anchors dtstart to now, or its months-old anchor would spend the single occurrence on save.
 - Confirmation prompts never invent a time. An update with no stated time describes the task's real one.
 - Spent one-offs are quarantined under "Already happened" in the tasks list. Nothing retires them (active stays 1), so listing them as live makes the whole list untrustworthy.
+
+## Before shipping
+
+Three layers, in order. Each exists because something got past the previous one.
+
+1. **`npm run deploy` is gated** by `scripts/predeploy.mjs`. Every check maps to a bug that actually shipped: an AI model id that didn't exist, a parser field populated and never read, `Date.now()` in a handler against a stated invariant, `schema.sql` drifting ahead of remote D1, stale test counts in these docs. **A check that never fires is worthless — when adding one, verify it by reintroducing the bug.** All eight were verified that way.
+2. **`/code-review` on the diff before pushing.** Mechanical checks can't see a ladder indexed two different ways in one function, or a confirmation prompt inventing a default time. Read the diff against the invariants above.
+3. **`scripts/postdeploy.mjs` runs automatically after deploy.** Uploading is not working: it waits one cron tick, then checks the worker responds, nothing is overdue past its retry lease, the 48h horizon is still being materialized, and today's board is fresh. Hints are *not* verifiable from outside — every failure returns null by design — so it prints the `wrangler tail` command instead of pretending to check.
 
 ## Conventions
 

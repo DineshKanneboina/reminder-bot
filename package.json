@@ -9,7 +9,11 @@
     "typecheck": "tsc",
     "db:init": "wrangler d1 execute reminder-bot --remote --file=./schema.sql",
     "db:seed": "wrangler d1 execute reminder-bot --remote --file=./seed.sql",
-    "pretest": "sh build-test.sh"
+    "pretest": "sh build-test.sh",
+    "predeploy": "node scripts/predeploy.mjs",
+    "postdeploy": "node scripts/postdeploy.mjs",
+    "check": "SKIP_REMOTE=1 node scripts/predeploy.mjs",
+    "smoke": "SKIP_WAIT=1 node scripts/postdeploy.mjs"
   },
   "keywords": [],
   "author": "",
