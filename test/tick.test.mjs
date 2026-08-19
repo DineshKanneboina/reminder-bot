@@ -197,6 +197,67 @@ test("acknowledging stops the nagging immediately", async () => {
   assert.equal(sent.filter((s) => s.kind === "telegram").length, before, "no nag after ack");
 });
 
+test("closing something out says what is left, renumbered", async () => {
+  seedTask("09:00", { id: "t1", title: "resume" });
+  seedTask("09:00", { id: "t2", title: "protein" });
+  seedTask("09:00", { id: "t3", title: "shelf" });
+  seedTask("17:00", { id: "t4", title: "flight" });
+  await runTick(env, T0);
+
+  const db = new Db(d1);
+  const user = await db.user("u1");
+  let live = await db.liveForUser("u1", iso(T0));
+  assert.equal(live.length, 3, "the 17:00 one is not open yet");
+
+  const reply = await applyIntent(parseKeyword("done 3", live), user, db, env, live, T0);
+  assert.match(reply.text, /Done — shelf/);
+  assert.match(reply.text, /<b>Still open<\/b>/);
+  assert.match(reply.text, /1\. <b>resume<\/b>/);
+  assert.match(reply.text, /2\. <b>protein<\/b>/);
+  assert.match(reply.text, /<b>Later today<\/b>/);
+  assert.match(reply.text, /flight/);
+
+  const stillOpen = reply.text.split("Still open")[1];
+  assert.doesNotMatch(stillOpen, /shelf/, "what was just closed is gone from the list");
+
+  // The numbers in that reply are the ones the NEXT message resolves against.
+  // Re-reading matters: `live` still held the closed item, one place earlier.
+  live = await db.liveForUser("u1", iso(T0));
+  const next = parseKeyword("done 1", live);
+  assert.equal(next.target.instance_id, live[0].id);
+  const second = await applyIntent(next, user, db, env, live, T0);
+  assert.match(second.text, /Done — resume/, "done 1 closed what the list called 1");
+});
+
+test("closing the last thing says so rather than showing an empty list", async () => {
+  seedTask("09:00");
+  await runTick(env, T0);
+  const db = new Db(d1);
+  const live = await db.liveForUser("u1", iso(T0));
+
+  const reply = await applyIntent(
+    parseKeyword("done", live), await db.user("u1"), db, env, live, T0,
+  );
+  assert.match(reply.text, /That's everything for today/);
+  assert.equal(reply.actions, undefined, "and offers no stale buttons");
+});
+
+test("a carried-over item is dated in the list, not only on the board", async () => {
+  seedTask("18:00", { id: "t1", title: "plan Thailand" });
+  const morning = localToUtc(2026, 8, 12, 8, 40, TZ);
+  const lastNight = localToUtc(2026, 8, 11, 18, 0, TZ);
+  d1.exec(`INSERT INTO reminder_instances VALUES
+    ('i_last','t1','u1','${iso(lastNight)}','notified',2,1,
+     '${iso(morning + 3600_000)}','${iso(morning + 7200_000)}',NULL,NULL);`);
+
+  const db = new Db(d1);
+  const live = await db.liveForUser("u1", iso(morning));
+  const r = await applyIntent(
+    parseKeyword("list", live), await db.user("u1"), db, env, live, morning,
+  );
+  assert.match(r.text, /plan Thailand<\/b> — due yesterday 6:00 pm/);
+});
+
 test("bare 'done' refuses to guess when several chains are live", async () => {
   seedTask("09:00", { id: "t1", title: "trash" });
   seedTask("09:00", { id: "t2", title: "vitamins" });

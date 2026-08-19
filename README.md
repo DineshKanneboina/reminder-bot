@@ -102,7 +102,7 @@ The numbers are real — `done 1` works, and so do the buttons underneath.
 
 | You say | It does |
 |---|---|
-| `done` · `done 2` | acknowledge (bare `done` asks which, if several are open) |
+| `done` · `done 2` | acknowledge, and get what's left of today back |
 | `snooze 30m` · `snooze 2 1h` | push it out, reset escalation, extend the give-up window |
 | `skip` | close it out without doing it |
 
@@ -325,7 +325,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 90 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 93 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run dev       # local worker + local D1
 ```

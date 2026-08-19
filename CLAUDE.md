@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 90 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 93 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — wrangler deploy to production (owner runs this)
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
@@ -48,6 +48,8 @@ Two loops over one D1 database:
 - A policy change never supersedes live instances — they join their policy through the task and pick the new tier up on the next tick.
 - The board is a view: a failed post or edit must never cost a nag, and never fails the tick.
 - Identical board content is not re-edited (fingerprint), or every tick would burn an API call Telegram rejects as unmodified.
+- Closing something out re-reads liveForUser rather than filtering the `live` snapshot. That snapshot predates the change, so its numbering is one ahead of what the numbers in the very same reply must resolve to.
+- Any list that can carry an item past midnight dates it (whenLabel). A bare clock time under today's heading reads as today.
 - The board shows Missed (expired today) above Done. An item that ran out of road is the most useful thing left to report.
 - COUNT=1 is described as "once", never by its FREQ. `FREQ=DAILY;COUNT=1` is a one-off and calling it "daily" states the opposite of what will happen.
 - A dated one-off anchors dtstart to that local day. The RRULE carries no date, so dtstart IS the date — ignoring start_date fires the reminder today instead.

@@ -1,5 +1,5 @@
 import { describeRRule, oneOffOccurrence } from "./rrule";
-import { clockLabel, formatClock, ms, toLocalParts } from "./time";
+import { clockLabel, formatClock, localDateString, localDayBounds, ms, toLocalParts } from "./time";
 import { LiveInstance, OutboundAction, TaskRow } from "./types";
 
 export const clock = (isoStr: string, tz: string): string => {
@@ -31,6 +31,58 @@ export function describeSchedule(
   if (once !== null) return `once, ${shortDate(once, tz)} at ${clockLabel(localTime)}`;
   return describeRRule(rrule, localTime);
 }
+
+/**
+ * A time, dated only when it isn't today: "6:00 pm", "yesterday 6:00 pm",
+ * "Sun 9 Aug 6:00 pm".
+ *
+ * Anything that survives past midnight needs this. A bare clock time under a
+ * heading that says today reads as today — that is what made last night's 6pm
+ * item and tonight's 6pm occurrence indistinguishable on the board, and the
+ * same trap exists in every other list that can carry an item over.
+ */
+export function whenLabel(isoStr: string, tz: string, now: number): string {
+  const at = ms(isoStr);
+  const day = localDateString(at, tz);
+  const time = clock(isoStr, tz);
+  if (day === localDateString(now, tz)) return time;
+  if (day === localDateString(localDayBounds(now, tz)[0] - 1000, tz)) return `yesterday ${time}`;
+  return `${shortDate(at, tz)} ${time}`;
+}
+
+/**
+ * What is still on the plate, appended when something is closed out. Numbering
+ * matches liveForUser, so the `done 2` in this very message resolves correctly.
+ */
+export function renderRemaining(open: LiveInstance[], later: LiveInstance[], now: number) {
+  const blocks: string[] = [];
+
+  if (open.length) {
+    const lines = open.map(
+      (i, k) => `${k + 1}. <b>${esc(i.title)}</b> — due ${whenLabel(i.scheduled_for, i.timezone, now)}`,
+    );
+    blocks.push(`<b>Still open</b>\n${lines.join("\n")}`);
+  }
+
+  if (later.length) {
+    const shown = later.slice(0, LATER_SHOWN);
+    const lines = shown.map((i) => `• ${esc(i.title)} · ${clock(i.scheduled_for, i.timezone)}`);
+    const more = later.length > LATER_SHOWN ? `\n…and ${later.length - LATER_SHOWN} more` : "";
+    blocks.push(`<b>Later today</b>\n${lines.join("\n")}${more}`);
+  }
+
+  if (blocks.length === 0) {
+    return { text: "✨ That's everything for today.", actions: [] as OutboundAction[] };
+  }
+  return {
+    text: blocks.join("\n\n"),
+    actions: open
+      .slice(0, 4)
+      .map((i, k) => ({ label: `✅ ${k + 1}`, payload: `done:${i.id}:${k + 1}` })),
+  };
+}
+
+const LATER_SHOWN = 5;
 
 const ordinal = (n: number): string =>
   n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
@@ -91,10 +143,10 @@ export function renderCatchUp(insts: LiveInstance[]) {
   };
 }
 
-export function renderLiveList(insts: LiveInstance[]) {
+export function renderLiveList(insts: LiveInstance[], now: number) {
   if (insts.length === 0) return { text: "✨ Nothing open right now.", actions: [] };
   const lines = insts.map(
-    (i, k) => `${k + 1}. <b>${esc(i.title)}</b> — due ${clock(i.scheduled_for, i.timezone)}`,
+    (i, k) => `${k + 1}. <b>${esc(i.title)}</b> — due ${whenLabel(i.scheduled_for, i.timezone, now)}`,
   );
   return {
     text: `<b>Open now</b>\n${lines.join("\n")}`,

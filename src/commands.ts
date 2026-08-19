@@ -6,8 +6,8 @@
 import { Db, uid } from "./db";
 import { Parsed, needsConfirmation } from "./parser";
 import { describeRRule, firstOccurrence, isOneOff, parseRRule } from "./rrule";
-import { describeSchedule, renderLiveList, renderTaskList, esc, shortDate } from "./render";
-import { clockLabel, iso, localDateStart, ms, parseClock } from "./time";
+import { describeSchedule, renderLiveList, renderRemaining, renderTaskList, esc, shortDate } from "./render";
+import { clockLabel, iso, localDateStart, localDayBounds, ms, parseClock } from "./time";
 import { Env, LiveInstance, OutboundAction, TaskRow, UserRow } from "./types";
 
 export interface Reply {
@@ -192,9 +192,9 @@ export async function applyIntent(
       if (!id) {
         return {
           text: live.length
-            ? "Which one?\n" + renderLiveList(live).text
+            ? "Which one?\n" + renderLiveList(live, now).text
             : "Nothing open to close out.",
-          actions: live.length ? renderLiveList(live).actions : undefined,
+          actions: live.length ? renderLiveList(live, now).actions : undefined,
         };
       }
       const state = p.intent === "complete" ? "acknowledged" : "skipped";
@@ -202,12 +202,24 @@ export async function applyIntent(
       if (!ok) return { text: "That one was already closed out." };
       const inst = live.find((i) => i.id === id);
       const verb = p.intent === "complete" ? "✅ Done" : "🚫 Skipped";
-      return { text: `${verb}${inst ? ` — ${esc(inst.title)}` : ""}` };
+
+      // Re-read rather than filtering `live`: that snapshot was taken before
+      // this closed, so it still contains the item just finished AND its
+      // numbering is one ahead of what `done 2` in this reply would resolve to.
+      const remaining = await db.liveForUser(user.id, iso(now));
+      const [, dayEnd] = localDayBounds(now, user.timezone);
+      const later = await db.upcomingForUser(user.id, iso(now), iso(dayEnd));
+      const rest = renderRemaining(remaining, later, now);
+
+      return {
+        text: `${verb}${inst ? ` — ${esc(inst.title)}` : ""}\n\n${rest.text}`,
+        actions: rest.actions.length ? rest.actions : undefined,
+      };
     }
 
     case "snooze": {
       const id = await resolveInstance(db, user.id, p, live);
-      if (!id) return { text: "Snooze which one?\n" + renderLiveList(live).text };
+      if (!id) return { text: "Snooze which one?\n" + renderLiveList(live, now).text };
       const mins = p.snooze_minutes ?? 60;
       const ok = await db.snooze(id, now + mins * 60_000);
       if (!ok) return { text: "That one was already closed out." };
@@ -215,7 +227,7 @@ export async function applyIntent(
     }
 
     case "list": {
-      const r = renderLiveList(live);
+      const r = renderLiveList(live, now);
       return { text: r.text, actions: r.actions };
     }
 
