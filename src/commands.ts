@@ -377,10 +377,26 @@ function formatMinutes(m: number): string {
 
 const HELP = `<b>What I understand</b>
 
-<b>Make one</b>
+<b>Once, then done</b>
+Say it without a repeating word and it happens once.
+• <code>book the Thailand flight tomorrow at 9pm</code>
+• <code>doctor's appointment on sept 3 at 2pm</code>
+• <code>call the bank friday morning</code>
+
+<b>Over and over</b>
+Say <i>every</i>, <i>each</i>, <i>daily</i>, <i>weekly</i> — that word is what
+makes it repeat.
 • <code>gym every mon/wed/fri at 6:30am</code>
 • <code>take out trash every tuesday 8pm</code>
+• <code>vitamins daily at 8am</code>
+• <code>weigh in every other monday at 7am</code>
 • <code>review finances last friday of the month at 5pm</code>
+• <code>rent on the 1st of the month at 9am</code>
+
+I always tell you which one I made — <i>once, Thu 3 Sep at 2:00 pm</i> or
+<i>daily at 6:30 am</i>. If I got it wrong:
+• <code>make book flight a one-off</code>
+• <code>change gym to every tuesday</code>
 
 <b>When I nag you</b>
 • <code>done</code> / <code>done 2</code>
