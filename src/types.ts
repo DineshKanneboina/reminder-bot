@@ -124,6 +124,8 @@ export interface LiveInstance extends InstanceRow {
   title: string;
   /** The task's what/why, if captured. Feeds the nag-time hint. */
   notes: string | null;
+  /** Needed for routing: a one-off is a chosen moment, not a standing habit. */
+  rrule: string;
   local_time: string;
   timezone: string;
   ladder_minutes: string;

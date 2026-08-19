@@ -5,7 +5,7 @@
 
 import { Db, uid } from "./db";
 import { Parsed, needsConfirmation } from "./parser";
-import { describeRRule, firstOccurrence, parseRRule } from "./rrule";
+import { describeRRule, firstOccurrence, isOneOff, parseRRule } from "./rrule";
 import { describeSchedule, renderLiveList, renderTaskList, esc, shortDate } from "./render";
 import { clockLabel, iso, localDateStart, ms, parseClock } from "./time";
 import { Env, LiveInstance, OutboundAction, TaskRow, UserRow } from "./types";
@@ -365,19 +365,11 @@ function anchorFor(
     const dated = localDateStart(p.task.start_date, task.timezone);
     if (dated !== null) return dated;
   }
-  if (isOneOffRule(rule)) {
+  if (isOneOff(rule)) {
     const first = firstOccurrence(rule, ms(task.dtstart), localTime, task.timezone);
     if (first === null || first < now) return now;
   }
   return ms(task.dtstart);
-}
-
-function isOneOffRule(rrule: string): boolean {
-  try {
-    return parseRRule(rrule).count === 1;
-  } catch {
-    return false;
-  }
 }
 
 function validClock(v: string | null): string | null {

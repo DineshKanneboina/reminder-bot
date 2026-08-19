@@ -111,8 +111,11 @@ so there's nothing to resolve.
 
 ## How loudly
 
-Everything is quiet by default: it appears on the board and says nothing for
-four hours, then nags on its ladder. Change that per task:
+Recurring tasks are quiet by default: they appear on the board and say nothing
+for four hours, then nag on their ladder. A one-off is different — you named a
+time, so it pushes at that time and then nags normally if you ignore it.
+
+Change any of it per task:
 
 ```
 make gym urgent      → nags the moment it's due, and keeps at it
@@ -322,7 +325,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 88 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 90 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run dev       # local worker + local D1
 ```

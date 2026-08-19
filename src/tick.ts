@@ -10,7 +10,7 @@ import { syncBoards } from "./board";
 import { buildChannels, resolveTarget } from "./channels";
 import { Db, uid } from "./db";
 import { firstStepHint } from "./hint";
-import { occurrencesBetween } from "./rrule";
+import { isOneOff, occurrencesBetween } from "./rrule";
 import { renderBatch, renderCatchUp, renderNag } from "./render";
 import { iso, ms, pushPastQuietHours } from "./time";
 import { Env, InstanceRow, LiveInstance, PolicyRow, TaskRow } from "./types";
@@ -170,13 +170,19 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
  * When an instance is allowed to push a notification, as opposed to merely
  * appearing on the board.
  *
- * 'urgent' and 'notify' push the moment they come due. 'quiet' — which is every
- * ordinary reminder — waits out the aging window first, and that wait is itself
- * pushed past quiet hours so a 23:30 item doesn't come alive at 03:30.
+ * 'urgent' and 'notify' push the moment they come due. So do one-offs, whatever
+ * their tier: "remind me at 10:27" is a moment the user chose, and holding it
+ * back four hours answers a different question than the one they asked. The
+ * quiet window is for standing habits, where the board genuinely is enough
+ * until the day starts getting away from you.
+ *
+ * Everything else waits out the aging window, and that wait is itself pushed
+ * past quiet hours so a 23:30 item doesn't come alive at 03:30.
  */
 export function pushAt(inst: LiveInstance, agingMs: number): number {
   const due = ms(inst.scheduled_for);
   if (inst.tier !== "quiet") return due;
+  if (isOneOff(inst.rrule)) return due;
   return pushPastQuietHours(due + agingMs, inst.timezone, inst.quiet_start, inst.quiet_end);
 }
 

@@ -219,6 +219,15 @@ export function occurrencesBetween(
   return out.sort((a, b) => a - b);
 }
 
+/** Is this rule a one-off — a specific moment the user picked, not a habit? */
+export function isOneOff(rruleStr: string): boolean {
+  try {
+    return parseRRule(rruleStr).count === 1;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * When a one-off actually lands, or null if this rule isn't a one-off.
  *

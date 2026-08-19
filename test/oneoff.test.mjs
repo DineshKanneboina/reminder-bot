@@ -15,12 +15,13 @@ import { Db } from "../build/db.js";
 import { applyIntent } from "../build/commands.js";
 import { parseKeyword } from "../build/parser.js";
 import { localToUtc } from "../build/time.js";
+import { installFetchCapture as _cap } from "./d1-shim.mjs";
 
 const TZ = "America/Chicago";
 /** Wednesday 19 August 2026, 10:00 local — mid-morning, so "today at 09:00" is past. */
 const NOW = localToUtc(2026, 8, 19, 10, 0, TZ);
 
-let d1, env;
+let d1, env, sent;
 
 beforeEach(() => {
   d1 = new FakeD1(["schema.sql", "seed.sql"]);
@@ -31,7 +32,7 @@ beforeEach(() => {
     STALE_FLOOR_HOURS: "2",
     BOARD_ENABLED: "0",
   };
-  installFetchCapture();
+  sent = installFetchCapture();
   d1.exec(`
     INSERT INTO users VALUES ('u1','${TZ}','pol_default',NULL,'2026-01-01T00:00:00Z');
     INSERT INTO channels VALUES ('c1','u1','telegram','9999',0,1);
@@ -210,4 +211,43 @@ test("converting a long-running daily task to a one-off re-anchors it", async ()
   assert.deepEqual(scheduled(), [tonight]);
   for (const day of [1, 2, 5]) await runTick(env, tonight + day * 86400_000);
   assert.deepEqual(scheduled(), [tonight], "and never again");
+});
+
+const nags = () => sent.filter((s) => s.kind === "telegram").map((s) => s.text);
+
+test("a one-off pushes at the time it was asked for, not four hours later", async () => {
+  // The reason this is not just "quiet tier behaviour": "remind me at 10:27" is
+  // a moment the user picked. Parking it until 14:27 answers a question nobody
+  // asked. Standing habits still wait — that is covered in board.test.mjs.
+  await apply(intent({
+    task: {
+      title: "brush my teeth",
+      rrule: "FREQ=DAILY;COUNT=1",
+      local_time: "10:30",
+      start_date: "2026-08-19",
+    },
+  }));
+  const at = localToUtc(2026, 8, 19, 10, 30, TZ);
+
+  const early = await runTick(env, at - 60_000);
+  assert.equal(early.sent, 0, "nothing before its time");
+
+  const r = await runTick(env, at);
+  assert.equal(r.parked, 0, "a chosen moment is never parked");
+  assert.equal(r.sent, 1);
+  assert.match(nags()[0], /brush my teeth/);
+});
+
+test("a recurring task at the same hour still waits on the board", async () => {
+  // Same policy, same clock time, different rule — the one-off exemption must
+  // not quietly turn quiet-by-default off for everything.
+  await apply(intent({
+    task: { title: "stretch", rrule: "FREQ=DAILY", local_time: "10:30" },
+  }));
+  const at = localToUtc(2026, 8, 20, 10, 30, TZ);
+
+  const r = await runTick(env, at);
+  assert.equal(r.sent, 0, "habits still go to the board first");
+  assert.equal(r.parked, 1);
+  assert.equal(nags().length, 0);
 });

@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 88 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 90 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — wrangler deploy to production (owner runs this)
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
@@ -40,6 +40,7 @@ Two loops over one D1 database:
 - Hint output is untrusted: dropped if it contains markup or a link, escaped again at render, capped in length. A missing hint is invisible; a mangled one is worse than none.
 - Bare "done"/"yes" never guess: done with 2+ live chains asks which; yes only confirms when a pending_action actually exists, else falls to the LLM with dialog context.
 - Routing is decided before anything is rendered or sent. A quiet item that hasn't aged out is parked, not sent.
+- A one-off pushes at its due time whatever its tier. "Remind me at 10:27" names a moment the user chose; the quiet window is for standing habits, not for a time someone asked for.
 - Parking gives back the attempt and escalation step the claim took: waiting on the board is not an attempt, and the first real nag arrives with a full ladder.
 - Parking stretches give_up_at past the aging window. A 180-minute give-up must not expire an item before a 4-hour quiet wait lets it speak.
 - The quiet wait is pushed past quiet hours, so a 21:00 item does not come alive at 01:00.
@@ -67,7 +68,7 @@ Two loops over one D1 database:
 Decisions the owner settled, and what they mean in code:
 
 - **Fresh board message each morning**, chat becomes a daily log. Posted at the first tick past `BOARD_HOUR` (default 07:00 local) or sooner if there is already something to show; yesterday's is unpinned and left in the chat. Keyed by local date in `boards`. (Option B web /board page still deferred.)
-- **Quiet by default**: every tier except `urgent` is board-only until an item ages past `QUIET_AGING_HOURS` (default **4**), then it nags on its normal ladder. This applies to existing tasks — `pol_default` and `pol_gentle` are tier `quiet`.
+- **Quiet by default**: every tier except `urgent` is board-only until an item ages past `QUIET_AGING_HOURS` (default **4**), then it nags on its normal ladder. This applies to existing tasks — `pol_default` and `pol_gentle` are tier `quiet`. **One-offs are exempt** (settled 19 Aug, after a timed one-off sat silent for four hours): a chosen moment pushes on time, then ladders normally.
 - **`notify` tier** = one push, empty ladder, no follow-ups (`pol_notify`).
 - Speakable policies work on create and update, via a keyword regex ("make gym urgent") before the LLM ever sees it.
 - `BOARD_ENABLED=0` is a kill switch. tick.test.mjs and inbound.test.mjs set it — they pin the escalation machine and a second message per tick would muddy every send count. Board behaviour lives in board.test.mjs.

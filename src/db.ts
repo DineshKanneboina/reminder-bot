@@ -14,7 +14,7 @@ import { iso } from "./time";
 export const uid = (): string => crypto.randomUUID();
 
 const INSTANCE_JOIN = `
-  SELECT i.*, t.title, t.notes, t.local_time, t.timezone,
+  SELECT i.*, t.title, t.notes, t.rrule, t.local_time, t.timezone,
          p.ladder_minutes, p.channel_ladder, p.quiet_start, p.quiet_end,
          p.give_up_after_minutes, p.max_concurrent, p.tier
     FROM reminder_instances i
