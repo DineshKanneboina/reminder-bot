@@ -25,6 +25,8 @@ export interface TickReport {
   caughtUp: number;
   /** Claimed but deliberately not pushed: quiet items still inside their window. */
   parked: number;
+  /** Nags that carried a hint. `sent` high with `hinted` at 0 means hints are broken. */
+  hinted: number;
 }
 
 const DEFAULT_QUIET_AGING_HOURS = 4;
@@ -33,7 +35,7 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
   const db = Db.from(env);
   const report: TickReport = {
     materialized: 0, expired: 0, superseded: 0, claimed: 0, sent: 0, failed: 0, caughtUp: 0,
-    parked: 0,
+    parked: 0, hinted: 0,
   };
 
   const horizonH = Number(env.MATERIALIZE_HORIZON_HOURS ?? 48);
@@ -118,6 +120,7 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
           notes: lead.notes,
           attempt_count: lead.attempt_count,
         });
+        if (hint) report.hinted++;
       }
 
       const { text, actions } =

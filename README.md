@@ -210,7 +210,7 @@ Set in `wrangler.jsonc` under `vars`:
 | Variable | Default | Meaning |
 |---|---|---|
 | `HINTS_ENABLED` | on | set to `0` to stop generating first-step hints |
-| `HINT_MODEL` | `@cf/meta/llama-3.1-8b-instruct` | Workers AI model for hints |
+| `HINT_MODEL` | `@cf/meta/llama-3.2-3b-instruct` | Workers AI model for hints — check `npx wrangler ai models` |
 | `HINT_BUDGET_PER_TICK` | `3` | most hints one tick will generate |
 | `QUIET_AGING_HOURS` | `4` | how long a quiet item sits on the board before it nags |
 | `BOARD_HOUR` | `07:00` | when an otherwise-empty board is posted |
@@ -322,7 +322,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 86 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 88 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run dev       # local worker + local D1
 ```

@@ -18,7 +18,12 @@
 
 import { Env } from "./types";
 
-const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+// Verify with `npx wrangler ai models` before changing this. Model ids are not
+// stable across accounts or over time, and because every failure here is
+// swallowed, a wrong id produces no hints and no error — silence that looks
+// exactly like "the feature is on and the model had nothing to add".
+// 3b rather than something larger: the timeout is 1200ms, so latency beats depth.
+const DEFAULT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
 const TIMEOUT_MS = 1200;
 const MAX_TOKENS = 40;
 const MAX_CHARS = 90;
@@ -60,15 +65,21 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
       }),
       TIMEOUT_MS,
     );
-    if (raw === null) return null;
+    if (raw === null) {
+      console.warn("hint timed out", { model: env.HINT_MODEL ?? DEFAULT_MODEL });
+      return null;
+    }
     const text =
       raw && typeof raw === "object" && "response" in raw
         ? String((raw as { response: unknown }).response ?? "")
         : "";
     return sanitize(text);
-  } catch {
-    // Model unavailable, quota exhausted, malformed response — all the same
-    // outcome. A hint is a garnish; it never gets to be a failure mode.
+  } catch (e) {
+    // Model unavailable, bad model id, quota exhausted, malformed response —
+    // all the same outcome for the nag. Logged rather than swallowed silently:
+    // a wrong model id is invisible from the outside, so the only way to tell
+    // it apart from "no hint was warranted" is a line in the log.
+    console.error("hint failed", { model: env.HINT_MODEL ?? DEFAULT_MODEL, error: String(e) });
     return null;
   }
 }

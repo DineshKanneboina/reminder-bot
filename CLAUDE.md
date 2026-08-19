@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 86 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 88 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — wrangler deploy to production (owner runs this)
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
@@ -36,6 +36,7 @@ Two loops over one D1 database:
 - Downtime produces one digest, not a nag flood.
 - Snooze extends give_up_at.
 - A send is never *held* by an LLM call. Hints run on the send path by design, but behind a 1200ms timeout and a per-tick budget, and any failure sends hintless. The inbound parser is still never on the send path at all.
+- `TickReport.hinted` exists so a broken model is diagnosable: `sent` above zero with `hinted` stuck at zero is the signature, and hint failures log rather than vanish.
 - Hint output is untrusted: dropped if it contains markup or a link, escaped again at render, capped in length. A missing hint is invisible; a mangled one is worse than none.
 - Bare "done"/"yes" never guess: done with 2+ live chains asks which; yes only confirms when a pending_action actually exists, else falls to the LLM with dialog context.
 - Routing is decided before anything is rendered or sent. A quiet item that hasn't aged out is parked, not sent.
@@ -81,7 +82,7 @@ npm run db:seed   # re-seeds the four policies with their tiers
 
 ## Phase 2 — nag-time hints (SHIPPED)
 
-- Workers AI via the `AI` binding, NOT the Anthropic key and nothing on the owner's Mac. Model overridable with `HINT_MODEL`; default `@cf/meta/llama-3.1-8b-instruct`.
+- Workers AI via the `AI` binding, NOT the Anthropic key and nothing on the owner's Mac. Model overridable with `HINT_MODEL`; default `@cf/meta/llama-3.2-3b-instruct`. **Verify any model id with `npx wrangler ai models` before shipping it** — ids differ per account, and a wrong one produces no hints and no visible error. The first default shipped did not exist.
 - Hint prompt = title + notes + attempt_count. Single nags only — a batched message is already a list, and one suggestion for six reminders is worse than none.
 - `HINTS_ENABLED=0` kills it; `HINT_BUDGET_PER_TICK` (default 3) bounds how many a single tick will generate.
 - What/why capture is an invitation, never a requirement: create suggests `note: ...`, which attaches to the task created in the last hour. `note for <task>: ...` works any time. Both are keyword paths — capturing context must not itself cost a model call.

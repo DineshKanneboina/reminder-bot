@@ -93,6 +93,7 @@ test("a hint reaches the nag when the model behaves", async () => {
 
   const r = await runTick(env, T0);
   assert.equal(r.sent, 1);
+  assert.equal(r.hinted, 1, "and the tick reports it, so a broken model is visible");
   assert.match(nags()[0], /Put the brackets by the wall\./);
   assert.match(nags()[0], /💡/);
 
@@ -234,4 +235,26 @@ test("a bare note with nothing recent asks rather than guessing", async () => {
   );
   assert.match(reply.text, /Which one\?/);
   assert.equal((await db.tasksForUser("u1"))[0].notes, null, "nothing was written");
+});
+
+test("the default model is one this account actually has", async () => {
+  // A wrong model id is the one failure mode with no symptom: every hint
+  // returns null and the nags look exactly like a quiet model. The first
+  // default shipped was @cf/meta/llama-3.1-8b-instruct, which does not exist —
+  // check `npx wrangler ai models` before changing this.
+  seedTask();
+  let asked = null;
+  env.AI = { async run(model) { asked = model; return { response: "Start there." }; } };
+
+  await runTick(env, T0);
+  assert.equal(asked, "@cf/meta/llama-3.2-3b-instruct");
+});
+
+test("a tick that sends but never hints is visible in the report", async () => {
+  seedTask();
+  env.AI = fakeAI(() => { throw new Error("no such model"); });
+
+  const r = await runTick(env, T0);
+  assert.equal(r.sent, 1);
+  assert.equal(r.hinted, 0, "sent > 0 with hinted 0 is the broken-model signature");
 });
