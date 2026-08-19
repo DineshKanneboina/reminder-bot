@@ -39,12 +39,21 @@ const ordinal = (n: number): string =>
  * A single nag. `index` is the 1-based position in the user's live list, which
  * is what makes numbered text replies ("done 2") resolvable.
  */
-export function renderNag(inst: LiveInstance, index: number, total: number) {
+export function renderNag(
+  inst: LiveInstance,
+  index: number,
+  total: number,
+  /** Optional first-step suggestion. Null renders exactly as it did before. */
+  hint?: string | null,
+) {
   const nth = inst.attempt_count > 1 ? ` · ${ordinal(inst.attempt_count)} nudge` : "";
   const head = total > 1 ? `${index}. ` : "";
+  // esc even though hint.ts already drops angle brackets: this is model output
+  // going into an HTML message, and one guard is not a guard.
+  const tip = hint ? `\n💡 <i>${esc(hint)}</i>` : "";
   const text =
     `⏰ ${head}<b>${esc(inst.title)}</b>\n` +
-    `<i>due ${clock(inst.scheduled_for, inst.timezone)}${nth}</i>`;
+    `<i>due ${clock(inst.scheduled_for, inst.timezone)}${nth}</i>${tip}`;
   const actions: OutboundAction[] = [
     { label: "✅ Done", payload: `done:${inst.id}:${index}` },
     { label: "⏳ 1h", payload: `snooze:${inst.id}:${index}:60` },

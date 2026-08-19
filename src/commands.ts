@@ -16,6 +16,8 @@ export interface Reply {
 }
 
 const DEFAULT_TIME = "09:00";
+/** How recent a task must be for a bare "note: ..." to attach to it. */
+const NOTE_WINDOW_MS = 60 * 60_000;
 const POLICY_WORDS = "<code>notify</code>, <code>gentle</code>, <code>quiet</code> or <code>urgent</code>";
 
 export async function applyIntent(
@@ -114,10 +116,13 @@ export async function applyIntent(
       };
       await db.insertTask(task);
       const styled = asked ? ` · <i>${esc(asked.name)}</i>` : "";
+      // Invite context, never require it. A reminder with a note gets a more
+      // useful nudge; one without still works exactly as before.
       return {
         text:
           `✅ <b>${esc(task.title)}</b> — ` +
-          `${describeSchedule(task.rrule, anchor, task.local_time, task.timezone)}${styled}`,
+          `${describeSchedule(task.rrule, anchor, task.local_time, task.timezone)}${styled}\n` +
+          `<i>Say <code>note: why this matters</code> and my nudges get more useful.</i>`,
       };
     }
 
@@ -212,6 +217,26 @@ export async function applyIntent(
     case "list": {
       const r = renderLiveList(live);
       return { text: r.text, actions: r.actions };
+    }
+
+    case "set_notes": {
+      if (!p.task.notes) return { text: "What should I note?" };
+      // Named task first; otherwise the one just created, which is what a bare
+      // "note: ..." means when it follows a confirmation.
+      const found = p.target.task_query
+        ? await resolveTask(db, user.id, p)
+        : { task: await db.newestTask(user.id, iso(now - NOTE_WINDOW_MS)) };
+      const task = "error" in found ? null : found.task;
+      if (!task) {
+        return {
+          text:
+            "error" in found
+              ? found.error
+              : "Which one? Say <code>note for gym: ...</code>.",
+        };
+      }
+      await db.updateTask(task.id, { notes: p.task.notes });
+      return { text: `📝 Noted on <b>${esc(task.title)}</b>. I'll use it when I nudge you.` };
     }
 
     case "tasks":
@@ -421,6 +446,7 @@ start nagging if you leave them there.
 • <code>tasks</code> — all your reminders
 • <code>pause 2h</code> / <code>resume</code>
 • <code>set timezone to Asia/Tokyo</code>
+• <code>note for gym: knee is bad, start with 5 min</code> — better nudges
 • <code>delete gym</code>
 
 Anything else, just say it in plain English.`;

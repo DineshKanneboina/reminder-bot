@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 75 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 86 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — wrangler deploy to production (owner runs this)
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
@@ -14,6 +14,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 Two loops over one D1 database:
 
 - `tick.ts` — cron tick, five idempotent phases: (A) materialize occurrences 48h ahead from RRULEs, (B) catch-up digest if the worker was down 2h+, (C) expire / supersede stale chains, (D) claim due instances with a 2-minute lease, route, send, write backoff, (E) reconcile the pinned daily board. Cron does NOT retry failed runs; the DB-driven design self-heals on the next tick.
+- `hint.ts` — nag-time "first step" hints via Workers AI (`env.AI`). Bounded by a hard timeout and a per-tick budget; returns null on absolutely anything going wrong, and null means the nag sends exactly as it did before Phase 2. Never throws.
 - `board.ts` — the daily board and the quiet half of routing. Renders due / later today / missed / done, posts one pinned message per local day, edits it in place, unpins yesterday's. Never throws into the tick.
 - `index.ts` — webhook entry. Inbound: sender allowlist → dedupe on provider message id → parse (button → keyword → LLM) → applyIntent → reply → save dialog state.
 - `parser.ts` — fast keyword/regex paths first (done/snooze/list/questions — these must never cost an API call); Claude Haiku via env.ANTHROPIC_API_KEY only for novel text. Single JSON response schema, strictly normalized.
@@ -34,7 +35,8 @@ Two loops over one D1 database:
 - Replayed provider message ids are no-ops.
 - Downtime produces one digest, not a nag flood.
 - Snooze extends give_up_at.
-- Sends never block on any LLM call.
+- A send is never *held* by an LLM call. Hints run on the send path by design, but behind a 1200ms timeout and a per-tick budget, and any failure sends hintless. The inbound parser is still never on the send path at all.
+- Hint output is untrusted: dropped if it contains markup or a link, escaped again at render, capped in length. A missing hint is invisible; a mangled one is worse than none.
 - Bare "done"/"yes" never guess: done with 2+ live chains asks which; yes only confirms when a pending_action actually exists, else falls to the LLM with dialog context.
 - Routing is decided before anything is rendered or sent. A quiet item that hasn't aged out is parked, not sent.
 - Parking gives back the attempt and escalation step the claim took: waiting on the board is not an attempt, and the first real nag arrives with a full ladder.
@@ -77,13 +79,13 @@ npx wrangler d1 execute reminder-bot --remote --command "CREATE TABLE IF NOT EXI
 npm run db:seed   # re-seeds the four policies with their tiers
 ```
 
-## Agreed next build (design settled with the owner)
+## Phase 2 — nag-time hints (SHIPPED)
 
-### Phase 2 — nag-time hints
-
-- Per-nag one-liner "first step" suggestions generated at send time via Workers AI (env.AI binding, free tier — NOT the Anthropic key, and explicitly NOT a model on the owner's Mac; the send path must never depend on his laptop).
-- Hard rules: short generation timeout, nag sends hintless on any failure, cap tokens, strip newlines, drop suspicious output silently.
-- Optional what/why capture: after creating a naggable task, invite (never require) a short description into tasks.notes via dialog state; also "note for <task>: ..." anytime. Hint prompt = title + notes + attempt_count.
+- Workers AI via the `AI` binding, NOT the Anthropic key and nothing on the owner's Mac. Model overridable with `HINT_MODEL`; default `@cf/meta/llama-3.1-8b-instruct`.
+- Hint prompt = title + notes + attempt_count. Single nags only — a batched message is already a list, and one suggestion for six reminders is worse than none.
+- `HINTS_ENABLED=0` kills it; `HINT_BUDGET_PER_TICK` (default 3) bounds how many a single tick will generate.
+- What/why capture is an invitation, never a requirement: create suggests `note: ...`, which attaches to the task created in the last hour. `note for <task>: ...` works any time. Both are keyword paths — capturing context must not itself cost a model call.
+- Deploy needs no migration; `tasks.notes` already existed and was unused.
 
 ## Backlog (not yet scheduled)
 

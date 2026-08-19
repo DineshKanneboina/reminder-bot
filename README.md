@@ -121,6 +121,25 @@ make dishes notify   → one message, never again
 make gym quiet       → back to board-first
 ```
 
+## Better nudges
+
+A reminder with a note attached gets a one-line "first step" suggestion on each
+nag, generated at send time. Notes are optional and never asked for twice:
+
+```
+you  → note for shelf: the wood is already cut
+bot  → 📝 Noted on Build shelf. I'll use it when I nudge you.
+
+     …later…
+bot  → ⏰ Build shelf
+       due 9:00 am · 2nd nudge
+       💡 Measure the first bracket.
+```
+
+Right after creating something, a bare `note: ...` attaches to it. The hint runs
+on Workers AI behind a hard timeout — if it's slow, broken or out of quota the
+nag goes out on time without one, which is the normal case rather than an error.
+
 ## Everything else
 
 | You say | It does |
@@ -130,6 +149,7 @@ make gym quiet       → back to board-first
 | `pause 2h` · `resume` | mute without losing anything |
 | `set timezone to Asia/Tokyo` | existing reminders follow you |
 | `delete gym` | asks for confirmation first |
+| `note for gym: ...` | context that makes the nudges better |
 | `help` | the above, in the chat |
 
 A one-off that has already happened isn't deleted automatically — it moves to
@@ -189,6 +209,9 @@ Set in `wrangler.jsonc` under `vars`:
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `HINTS_ENABLED` | on | set to `0` to stop generating first-step hints |
+| `HINT_MODEL` | `@cf/meta/llama-3.1-8b-instruct` | Workers AI model for hints |
+| `HINT_BUDGET_PER_TICK` | `3` | most hints one tick will generate |
 | `QUIET_AGING_HOURS` | `4` | how long a quiet item sits on the board before it nags |
 | `BOARD_HOUR` | `07:00` | when an otherwise-empty board is posted |
 | `BOARD_ENABLED` | on | set to `0` to turn the board off entirely |
@@ -299,7 +322,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 75 tests: date logic, tick lifecycle, board, one-offs, webhooks
+npm test          # 86 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run dev       # local worker + local D1
 ```
@@ -326,7 +349,6 @@ with simulated time.
 
 ## Known gaps
 
-- Nag-time hints ("first step" suggestions generated at send time) aren't built.
 - The weekly review digest (completion rates, "you've snoozed this four weeks
   running") isn't built. Deliberately — run the base loop for a few weeks first
   so the suggestions have real data behind them.

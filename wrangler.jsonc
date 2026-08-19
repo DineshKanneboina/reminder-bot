@@ -15,6 +15,11 @@
 			"* * * * *"
 		]
 	},
+	// Workers AI, for nag-time hints. Free tier; the send path degrades to a
+	// hintless nag whenever this is slow, absent, or out of quota.
+	"ai": {
+		"binding": "AI"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",

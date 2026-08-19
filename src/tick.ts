@@ -9,6 +9,7 @@
 import { syncBoards } from "./board";
 import { buildChannels, resolveTarget } from "./channels";
 import { Db, uid } from "./db";
+import { firstStepHint } from "./hint";
 import { occurrencesBetween } from "./rrule";
 import { renderBatch, renderCatchUp, renderNag } from "./render";
 import { iso, ms, pushPastQuietHours } from "./time";
@@ -61,6 +62,12 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
   const claimed = await db.claimDue(iso(now), iso(staleFloor), iso(now + 120_000), 20);
   report.claimed = claimed.length;
 
+  // Hints are generated inline, so they are budgeted: a tick that claimed
+  // twenty reminders must not spend twenty timeouts before any of them are
+  // sent. Beyond the budget, nags go out hintless — which is the same thing
+  // that happens whenever the model is slow, so it needs no special handling.
+  let hintBudget = Number(env.HINT_BUDGET_PER_TICK ?? 3);
+
   const byUser = groupBy(claimed, (i) => i.user_id);
   for (const [userId, instances] of byUser) {
     const user = await db.user(userId);
@@ -101,10 +108,22 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
     for (const group of groups) {
       const lead = group[0];
       const startIdx = indexOf.get(lead.id) ?? 1;
+      // Only single nags get a hint. A batched message is already a list, and
+      // one suggestion attached to six reminders would be worse than none.
+      let hint: string | null = null;
+      if (group.length === 1 && hintBudget > 0) {
+        hintBudget--;
+        hint = await firstStepHint(env, {
+          title: lead.title,
+          notes: lead.notes,
+          attempt_count: lead.attempt_count,
+        });
+      }
+
       const { text, actions } =
         group.length > 1
           ? renderBatch(group, startIdx)
-          : renderNag(lead, startIdx, live.length);
+          : renderNag(lead, startIdx, live.length, hint);
 
       const step = Math.max(0, lead.escalation_step - 1);
       const ladder = safeJson<string[]>(lead.channel_ladder, ["primary"]);

@@ -14,7 +14,7 @@ import { iso } from "./time";
 export const uid = (): string => crypto.randomUUID();
 
 const INSTANCE_JOIN = `
-  SELECT i.*, t.title, t.local_time, t.timezone,
+  SELECT i.*, t.title, t.notes, t.local_time, t.timezone,
          p.ladder_minutes, p.channel_ladder, p.quiet_start, p.quiet_end,
          p.give_up_after_minutes, p.max_concurrent, p.tier
     FROM reminder_instances i
@@ -140,6 +140,22 @@ export class Db {
       .bind(userId)
       .all<TaskRow>();
     return r.results ?? [];
+  }
+
+  /**
+   * The task created most recently, for a bare "note: ...". Bounded by age on
+   * purpose: attaching a note to something made last week because it happens
+   * to be newest would put context on the wrong reminder silently.
+   */
+  async newestTask(userId: string, sinceIso: string): Promise<TaskRow | null> {
+    return this.d1
+      .prepare(
+        `SELECT * FROM tasks
+          WHERE user_id = ?1 AND active = 1 AND created_at >= ?2
+          ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(userId, sinceIso)
+      .first<TaskRow>();
   }
 
   /** Loose title match, used to resolve "the gym one". */

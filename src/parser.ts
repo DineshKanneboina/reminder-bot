@@ -10,7 +10,7 @@ import { LiveInstance } from "./types";
 
 export type Intent =
   | "create" | "update" | "delete" | "complete" | "snooze" | "skip"
-  | "list" | "tasks" | "set_timezone" | "set_quiet_hours"
+  | "list" | "tasks" | "set_notes" | "set_timezone" | "set_quiet_hours"
   | "pause" | "resume" | "confirm" | "help" | "unknown";
 
 export interface Parsed {
@@ -19,6 +19,8 @@ export interface Parsed {
   target: { instance_number: number | null; instance_id: string | null; task_query: string | null };
   task: {
     title: string | null;
+    /** Free text about what the task actually is, for nag-time hints. */
+    notes: string | null;
     rrule: string | null;
     local_time: string | null;
     /** YYYY-MM-DD in the user's timezone — for one-offs and delayed starts. */
@@ -38,7 +40,7 @@ const blank = (intent: Intent, source: Parsed["source"], patch: Partial<Parsed> 
   intent,
   confidence: 1,
   target: { instance_number: null, instance_id: null, task_query: null },
-  task: { title: null, rrule: null, local_time: null, start_date: null, policy: null, overlap: null },
+  task: { title: null, notes: null, rrule: null, local_time: null, start_date: null, policy: null, overlap: null },
   snooze_minutes: null,
   timezone: null,
   quiet_hours: null,
@@ -158,13 +160,34 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
     return blank("pause", "keyword", { pause_minutes: parseDuration(m[1]) });
   }
 
+  // "note for gym: knee has been bad, start with five minutes" — and a bare
+  // "note: ..." right after creating something, which attaches to that task.
+  // Deterministic: capturing context must never itself cost a model call.
+  if ((m = /^note\s+for\s+(.+?)\s*[:\-]\s*(.+)$/is.exec(raw.trim()))) {
+    return blank("set_notes", "keyword", {
+      target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
+      task: {
+        title: null, notes: m[2].trim(), rrule: null, local_time: null,
+        start_date: null, policy: null, overlap: null,
+      },
+    });
+  }
+  if ((m = /^note\s*[:\-]\s*(.+)$/is.exec(raw.trim()))) {
+    return blank("set_notes", "keyword", {
+      task: {
+        title: null, notes: m[1].trim(), rrule: null, local_time: null,
+        start_date: null, policy: null, overlap: null,
+      },
+    });
+  }
+
   // "make book flight a one-off" / "set gym to once" — the repair for a task
   // that was created as recurring when it should only ever happen once.
   if ((m = /^(?:make|set)\s+(.+?)\s+(?:a\s+|to\s+(?:a\s+)?)?(?:one[- ]?off|one[- ]?time|once)$/.exec(text))) {
     return blank("update", "keyword", {
       target: { instance_number: null, instance_id: null, task_query: m[1] },
       task: {
-        title: null, rrule: "FREQ=DAILY;COUNT=1", local_time: null,
+        title: null, notes: null, rrule: "FREQ=DAILY;COUNT=1", local_time: null,
         start_date: null, policy: null, overlap: null,
       },
     });
@@ -176,7 +199,7 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
     return blank("update", "keyword", {
       target: { instance_number: null, instance_id: null, task_query: m[1] },
       task: {
-        title: null, rrule: null, local_time: null, start_date: null,
+        title: null, notes: null, rrule: null, local_time: null, start_date: null,
         // "quiet" is how the tier is spoken; 'default' is the policy that carries it.
         policy: m[2] === "quiet" ? "default" : m[2],
         overlap: null,
@@ -195,10 +218,10 @@ Reply with ONE JSON object and nothing else. No prose, no markdown fences.
 
 Schema:
 {
-  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_timezone|set_quiet_hours|pause|resume|unknown",
+  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_notes|set_timezone|set_quiet_hours|pause|resume|unknown",
   "confidence": 0.0-1.0,
   "target": {"instance_number": int|null, "task_query": string|null},
-  "task": {"title": string|null, "rrule": string|null, "local_time": "HH:MM"|null,
+  "task": {"title": string|null, "notes": string|null, "rrule": string|null, "local_time": "HH:MM"|null,
            "start_date": "YYYY-MM-DD"|null,
            "policy": "notify|gentle|default|urgent"|null, "overlap": "supersede|stack"|null},
   "snooze_minutes": int|null,
@@ -257,6 +280,9 @@ Rules:
    must carry the field being changed.
 10. Times of day when no clock time is given: morning=09:00, noon=12:00,
    afternoon=15:00, evening=18:00, night/tonight=21:00.
+10b. CONTEXT about an existing task — "the gym one is for my knee", "I need
+   this because rent is due" — is intent "set_notes" with task_query and the
+   context in task.notes. It is never a new task.
 11. POLICY is how loudly it nags, and is spoken plainly. Set it on create AND on
    update, whenever the user says something about insistence:
      "just notify me", "one ping", "don't nag"        -> "notify"
@@ -341,6 +367,7 @@ export async function parseWithLlm(
       },
       task: {
         title: strOrNull(raw.task?.title),
+        notes: strOrNull(raw.task?.notes),
         rrule: strOrNull(raw.task?.rrule),
         local_time: strOrNull(raw.task?.local_time),
         start_date: (() => {
@@ -381,7 +408,7 @@ export function needsConfirmation(p: Parsed): boolean {
 
 const INTENTS: Intent[] = [
   "create", "update", "delete", "complete", "snooze", "skip", "list", "tasks",
-  "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
+  "set_notes", "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
 ];
 
 function normalizeIntent(v: unknown): Intent {

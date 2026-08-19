@@ -22,6 +22,18 @@ export interface Env {
   MATERIALIZE_HORIZON_HOURS?: string;
   STALE_FLOOR_HOURS?: string;
 
+  /**
+   * Workers AI, for nag-time hints. Deliberately a binding rather than an API
+   * key: the send path must not depend on a paid key or anything off-platform.
+   * Typed structurally so it doesn't pin a @cloudflare/workers-types version.
+   */
+  AI?: { run(model: string, inputs: Record<string, unknown>): Promise<unknown> };
+  /** "0" disables hints even when AI is bound. */
+  HINTS_ENABLED?: string;
+  HINT_MODEL?: string;
+  /** Max hints generated in one tick. Default 3. */
+  HINT_BUDGET_PER_TICK?: string;
+
   // Board & routing
   /** "0" disables the daily board entirely. Anything else (or unset) enables it. */
   BOARD_ENABLED?: string;
@@ -110,6 +122,8 @@ export interface InstanceRow {
 /** An instance joined to the fields we need to render, route and escalate it. */
 export interface LiveInstance extends InstanceRow {
   title: string;
+  /** The task's what/why, if captured. Feeds the nag-time hint. */
+  notes: string | null;
   local_time: string;
   timezone: string;
   ladder_minutes: string;
