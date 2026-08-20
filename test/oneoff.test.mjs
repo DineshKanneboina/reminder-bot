@@ -251,3 +251,48 @@ test("a recurring task at the same hour still waits on the board", async () => {
   assert.equal(r.parked, 1);
   assert.equal(nags().length, 0);
 });
+
+test("a recurring task asked for after its time today starts tomorrow", async () => {
+  // "Add a daily reminder to organize the bedroom" at 09:05, with the default
+  // 09:00, was refused as "already passed". Only a one-off gets one chance;
+  // a daily rule simply starts at its next slot.
+  const reply = await apply(intent({
+    task: { title: "organize bedroom", rrule: "FREQ=DAILY", local_time: "09:00", start_date: "2026-08-19" },
+  }));
+  assert.doesNotMatch(reply.text, /already passed/);
+  assert.match(reply.text, /daily at 9:00 am/);
+
+  await runTick(env, NOW);
+  assert.equal(
+    scheduled()[0],
+    localToUtc(2026, 8, 20, 9, 0, TZ),
+    "first occurrence is tomorrow, not refused and not today",
+  );
+});
+
+test("a one-off in the past is still refused", async () => {
+  // The recurring exemption must not soften the one-off guard.
+  const reply = await apply(intent({
+    task: { title: "call the bank", rrule: "FREQ=DAILY;COUNT=1", local_time: "09:00", start_date: "2026-08-19" },
+  }));
+  assert.match(reply.text, /already passed/);
+  assert.equal((await new Db(d1).tasksForUser("u1")).length, 0);
+});
+
+test("a note sent with the reminder is kept", async () => {
+  // Two messages was friction; the note arrived in the same breath as the task
+  // and was being parsed, normalized and then dropped on the floor.
+  const reply = await apply(intent({
+    task: {
+      title: "organize bedroom",
+      notes: "hanging up Lego painting on wall, use hangers",
+      rrule: "FREQ=DAILY",
+      local_time: "17:00",
+    },
+  }));
+  assert.match(reply.text, /Noted/);
+  assert.doesNotMatch(reply.text, /why this matters/, "and it stops asking for what it already has");
+
+  const [task] = await new Db(d1).tasksForUser("u1");
+  assert.equal(task.notes, "hanging up Lego painting on wall, use hangers");
+});

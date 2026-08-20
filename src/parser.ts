@@ -280,6 +280,10 @@ Rules:
    must carry the field being changed.
 10. Times of day when no clock time is given: morning=09:00, noon=12:00,
    afternoon=15:00, evening=18:00, night/tonight=21:00.
+10a. A create may carry its own context. "Add a daily reminder to organize the
+   bedroom. Note: hanging the Lego painting, use hangers" is ONE intent
+   "create", with the reminder in task.title and everything after "note:" in
+   task.notes. Do not drop it and do not split it into two intents.
 10b. CONTEXT about an existing task — "the gym one is for my knee", "I need
    this because rent is due" — is intent "set_notes" with task_query and the
    context in task.notes. It is never a new task.

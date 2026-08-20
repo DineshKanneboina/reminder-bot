@@ -38,9 +38,10 @@
 		// going silent until 1pm is worse than the noise it avoided. The board
 		// already covers "show me without spamming me".
 		"QUIET_AGING_HOURS": "0",
-		// Pinned here rather than left to the code default, so the two knobs
-		// that change how the day feels are visible in one place.
-		"BOARD_HOUR": "07:00"
+		// Midnight: the new day's board should be waiting when the day starts,
+		// not appear seven hours into it. The board is a plan for the day, and a
+		// plan that arrives at 07:00 has already missed anything earlier.
+		"BOARD_HOUR": "00:00"
 	},
 	"observability": {
 		"enabled": true

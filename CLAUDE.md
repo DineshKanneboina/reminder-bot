@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 97 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 100 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -55,6 +55,8 @@ Two loops over one D1 database:
 - The board shows Missed (expired today) above Done. An item that ran out of road is the most useful thing left to report.
 - COUNT=1 is described as "once", never by its FREQ. `FREQ=DAILY;COUNT=1` is a one-off and calling it "daily" states the opposite of what will happen.
 - A dated one-off anchors dtstart to that local day. The RRULE carries no date, so dtstart IS the date — ignoring start_date fires the reminder today instead.
+- Only a ONE-OFF is refused for landing in the past. A recurring rule asked for after today's slot starts at its next one — "daily at 9am" said at 9:05 means tomorrow, not never.
+- A note sent in the same message as the reminder is kept. Create and update both read `task.notes`; the predeploy dead-field check cannot see a field consumed in one branch and dropped in another.
 - A reminder that would first land in the past is refused, never stored. COUNT=1 gives it one chance, and a spent one is indistinguishable from a scheduled one in the tasks table.
 - Converting a recurring task to a one-off re-anchors dtstart to now, or its months-old anchor would spend the single occurrence on save.
 - Confirmation prompts never invent a time. An update with no stated time describes the task's real one.
@@ -79,7 +81,7 @@ Three layers, in order. Each exists because something got past the previous one.
 
 Decisions the owner settled, and what they mean in code:
 
-- **Fresh board message each morning**, chat becomes a daily log. Posted at the first tick past `BOARD_HOUR` (default 07:00 local) or sooner if there is already something to show; yesterday's is unpinned and left in the chat. Keyed by local date in `boards`. (Option B web /board page still deferred.)
+- **Fresh board message each morning**, chat becomes a daily log. Posted at the first tick past `BOARD_HOUR` (**production runs 00:00** — a plan for the day should be waiting when the day starts) or sooner if there is already something to show; yesterday's is unpinned and left in the chat. Keyed by local date in `boards`. (Option B web /board page still deferred.)
 - **Quiet by default**: every tier except `urgent` is board-only until an item ages past `QUIET_AGING_HOURS`, then it nags on its normal ladder. **Production runs 0** (set in wrangler.jsonc): one day of real use showed a 9am task going silent until 1pm was worse than the noise the window avoided, and the board already covers "show me without spamming me". The mechanism stays — it still honours quiet hours at zero — so raising it is a one-line change. This applies to existing tasks — `pol_default` and `pol_gentle` are tier `quiet`. **One-offs are exempt** (settled 19 Aug, after a timed one-off sat silent for four hours): a chosen moment pushes on time, then ladders normally.
 - **`notify` tier** = one push, empty ladder, no follow-ups (`pol_notify`).
 - Speakable policies work on create and update, via a keyword regex ("make gym urgent") before the LLM ever sees it.

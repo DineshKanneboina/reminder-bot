@@ -84,10 +84,19 @@ export async function applyIntent(
         anchor = dated;
       }
 
+      let first = firstOccurrence(p.task.rrule, anchor, localTime, user.timezone);
+
+      // A recurring rule whose first slot has already gone today simply starts
+      // at its next one — "daily at 9am" asked for at 9:05 means from tomorrow,
+      // not never. Only a one-off has a single chance to be in the past.
+      if (first !== null && first < now && !isOneOff(p.task.rrule)) {
+        anchor = now;
+        first = firstOccurrence(p.task.rrule, anchor, localTime, user.timezone);
+      }
+
       // Refuse to store something that will never fire. A dated one-off whose
       // date has gone is born dead, and silently keeping it is worse than
       // saying so — it would sit in the tasks list looking scheduled forever.
-      const first = firstOccurrence(p.task.rrule, anchor, localTime, user.timezone);
       if (first === null) {
         return { text: "That schedule never comes round — try rephrasing the date or frequency." };
       }
@@ -103,7 +112,9 @@ export async function applyIntent(
         id: uid(),
         user_id: user.id,
         title: p.task.title,
-        notes: null,
+        // Sent in the same message as the reminder. Discarding this was the
+        // same bug shape as start_date: parsed, normalized, never read.
+        notes: p.task.notes,
         rrule: p.task.rrule,
         dtstart: iso(anchor),
         local_time: localTime,
@@ -116,13 +127,15 @@ export async function applyIntent(
       };
       await db.insertTask(task);
       const styled = asked ? ` · <i>${esc(asked.name)}</i>` : "";
-      // Invite context, never require it. A reminder with a note gets a more
-      // useful nudge; one without still works exactly as before.
+      // Invite context, never require it — and don't ask for something that
+      // arrived in the same message.
+      const invite = task.notes
+        ? `\n<i>📝 Noted. I'll use it when I nudge you.</i>`
+        : `\n<i>Say <code>note: why this matters</code> and my nudges get more useful.</i>`;
       return {
         text:
           `✅ <b>${esc(task.title)}</b> — ` +
-          `${describeSchedule(task.rrule, anchor, task.local_time, task.timezone)}${styled}\n` +
-          `<i>Say <code>note: why this matters</code> and my nudges get more useful.</i>`,
+          `${describeSchedule(task.rrule, anchor, task.local_time, task.timezone)}${styled}${invite}`,
       };
     }
 
@@ -144,6 +157,7 @@ export async function applyIntent(
       if (p.task.start_date && localDateStart(p.task.start_date, match.task.timezone) === null) {
         return { text: "I didn't understand that date." };
       }
+      if (p.task.notes) fields.notes = p.task.notes;
       if (p.task.overlap) fields.overlap = p.task.overlap;
       if (p.task.policy) {
         const pol = await db.policyByName(user.id, p.task.policy);
