@@ -195,6 +195,18 @@ export function renderTaskList(tasks: TaskRow[], now: number) {
   return blocks.join("\n\n");
 }
 
+/** The standing facts, numbered so `forget 2` has something to resolve against. */
+export function renderPreferences(facts: { text: string }[]): string {
+  if (facts.length === 0) {
+    return (
+      "I'm not remembering anything about you yet.\n" +
+      "<i>Say <code>remember: I use Ryse protein</code> and I'll work it into my suggestions.</i>"
+    );
+  }
+  const lines = facts.map((f, k) => `${k + 1}. ${esc(f.text)}`);
+  return `<b>What I know about you</b>\n${lines.join("\n")}\n<i>Drop one with <code>forget 2</code>.</i>`;
+}
+
 export function esc(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
 }

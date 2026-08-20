@@ -146,6 +146,14 @@ export interface ClosedInstance {
   timezone: string;
 }
 
+/** One standing fact about the owner, fed to hint prompts verbatim. */
+export interface PreferenceRow {
+  id: string;
+  user_id: string;
+  text: string;
+  created_at: string;
+}
+
 export interface BoardRow {
   user_id: string;
   local_date: string;

@@ -6,7 +6,7 @@
 import { Db, uid } from "./db";
 import { Parsed, needsConfirmation } from "./parser";
 import { describeRRule, firstOccurrence, isOneOff, parseRRule } from "./rrule";
-import { describeSchedule, renderLiveList, renderRemaining, renderTaskList, esc, shortDate } from "./render";
+import { describeSchedule, renderLiveList, renderPreferences, renderRemaining, renderTaskList, esc, shortDate } from "./render";
 import { clockLabel, iso, localDateStart, localDayBounds, ms, parseClock } from "./time";
 import { Env, LiveInstance, OutboundAction, TaskRow, UserRow } from "./types";
 
@@ -265,6 +265,34 @@ export async function applyIntent(
       return { text: `📝 Noted on <b>${esc(task.title)}</b>. I'll use it when I nudge you.` };
     }
 
+    case "remember": {
+      if (!p.memory) return { text: "Remember what? e.g. <code>remember: I use Ryse protein</code>" };
+      await db.addPreference(user.id, p.memory, iso(now));
+      return {
+        text:
+          `🧠 Got it — <i>${esc(p.memory)}</i>\n` +
+          `<i>I'll use it when I suggest a first step. Say <code>preferences</code> to see the lot.</i>`,
+      };
+    }
+
+    case "forget": {
+      const n = p.target.instance_number;
+      const facts = await db.preferences(user.id);
+      const pick = n && facts[n - 1];
+      if (!pick) {
+        return {
+          text: facts.length
+            ? `Forget which? Say <code>forget 2</code>.\n${renderPreferences(facts)}`
+            : "I'm not remembering anything about you yet.",
+        };
+      }
+      await db.deletePreference(pick.id);
+      return { text: `🧠 Forgotten — <i>${esc(pick.text)}</i>` };
+    }
+
+    case "preferences":
+      return { text: renderPreferences(await db.preferences(user.id)) };
+
     case "tasks":
       return { text: renderTaskList(await db.tasksForUser(user.id), now) };
 
@@ -465,6 +493,8 @@ start nagging if you leave them there.
 • <code>pause 2h</code> / <code>resume</code>
 • <code>set timezone to Asia/Tokyo</code>
 • <code>note for gym: knee is bad, start with 5 min</code> — better nudges
+• <code>remember: I use Ryse protein</code> — things that apply to everything
+• <code>preferences</code> / <code>forget 2</code>
 • <code>delete gym</code>
 
 Anything else, just say it in plain English.`;

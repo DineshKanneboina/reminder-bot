@@ -113,3 +113,14 @@ CREATE TABLE IF NOT EXISTS boards (
   updated_at  TEXT NOT NULL,
   PRIMARY KEY (user_id, local_date)
 );
+
+-- Standing facts about the owner, injected into nag-time hint prompts. Free
+-- text rather than key/value: the consumer is a language model, and "I use Ryse
+-- protein" carries more than any schema I'd invent for it would.
+CREATE TABLE IF NOT EXISTS preferences (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  text       TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_preferences_user ON preferences(user_id);

@@ -63,6 +63,9 @@ function seedTask(opts = {}) {
 }
 
 const nags = () => sent.filter((s) => s.kind === "telegram").map((s) => s.text);
+/** The per-task half of the prompt. The system half mentions "About them" in
+ *  its rules, so asserting against the whole payload matches spuriously. */
+const askedAbout = (call) => call.inputs.messages.at(-1).content;
 
 // ------------------------------------------------------------------ sanitize
 
@@ -208,7 +211,7 @@ test("'note for <task>: ...' is a keyword path, and feeds the hint", async () =>
 
   env.AI = fakeAI({ response: "Measure the first bracket." });
   await runTick(env, T0);
-  assert.match(JSON.stringify(env.AI.calls[0].inputs), /wood is already cut/);
+  assert.match(askedAbout(env.AI.calls[0]), /wood is already cut/);
 });
 
 test("a bare 'note: ...' attaches to what was just created", async () => {
@@ -290,4 +293,63 @@ test("the restatement rule reaches the send path", async () => {
   assert.equal(r.sent, 1, "the nag still goes out");
   assert.equal(r.hinted, 0, "but carries no hint");
   assert.doesNotMatch(nags()[0], /💡/);
+});
+
+// --------------------------------------------------------------- preferences
+
+test("standing facts reach the hint prompt", async () => {
+  seedTask({ title: "Buy protein powder" });
+  const db = new Db(d1);
+  await db.addPreference("u1", "I use Ryse protein", "2026-08-01T00:00:00Z");
+  await db.addPreference("u1", "I shop at Costco", "2026-08-01T00:01:00Z");
+  env.AI = fakeAI({ response: "Check if Ryse is in stock before leaving." });
+
+  const r = await runTick(env, T0);
+  assert.equal(r.hinted, 1);
+
+  const prompt = askedAbout(env.AI.calls[0]);
+  assert.match(prompt, /About them/);
+  assert.match(prompt, /- I use Ryse protein/);
+  assert.match(prompt, /- I shop at Costco/);
+  assert.match(nags()[0], /Check if Ryse is in stock/);
+});
+
+test("no facts means the prompt is exactly what it was", async () => {
+  seedTask();
+  env.AI = fakeAI({ response: "Clear one shelf." });
+  await runTick(env, T0);
+  assert.doesNotMatch(askedAbout(env.AI.calls[0]), /About them/);
+});
+
+test("remember and forget are keyword paths", async () => {
+  const db = new Db(d1);
+  const user = await db.user("u1");
+
+  const p1 = parseKeyword("remember: I use Ryse protein", []);
+  assert.equal(p1.intent, "remember");
+  assert.equal(p1.source, "keyword", "must not cost a model call");
+  assert.equal(p1.memory, "I use Ryse protein");
+  await applyIntent(p1, user, db, env, [], T0);
+
+  await applyIntent(parseKeyword("remember: I shop at Costco", []), user, db, env, [], T0);
+  const listed = await applyIntent(parseKeyword("preferences", []), user, db, env, [], T0);
+  assert.match(listed.text, /1\. I use Ryse protein/);
+  assert.match(listed.text, /2\. I shop at Costco/);
+
+  const dropped = await applyIntent(parseKeyword("forget 1", []), user, db, env, [], T0);
+  assert.match(dropped.text, /Forgotten/);
+  const left = await db.preferences("u1");
+  assert.deepEqual(left.map((f) => f.text), ["I shop at Costco"]);
+});
+
+test("forgetting something that isn't there asks rather than guessing", async () => {
+  const db = new Db(d1);
+  const user = await db.user("u1");
+  const empty = await applyIntent(parseKeyword("forget 3", []), user, db, env, [], T0);
+  assert.match(empty.text, /not remembering anything/);
+
+  await applyIntent(parseKeyword("remember: I use Ryse protein", []), user, db, env, [], T0);
+  const outOfRange = await applyIntent(parseKeyword("forget 9", []), user, db, env, [], T0);
+  assert.match(outOfRange.text, /Forget which\?/);
+  assert.equal((await db.preferences("u1")).length, 1, "nothing was deleted");
 });

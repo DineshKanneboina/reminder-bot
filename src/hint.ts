@@ -51,6 +51,7 @@ const SYSTEM = [
   "5. One concrete action only: open something, find something, move something, write one line, send one message.",
   "6. If a note is given, build the step out of what the note says.",
   "7. The more times they have ignored it, the smaller your step should be.",
+  "7b. Standing facts under \"About them\" are things they told you once. Use one when it makes the step concrete — a brand, a shop, where something lives. Ignore them when they are irrelevant; never list them back.",
   "8. If the task is only two or three words, it is a label, not instructions. Infer the most likely concrete first move rather than echoing the label back.",
   "",
   "Examples:",
@@ -76,6 +77,8 @@ export interface HintSubject {
   title: string;
   notes: string | null;
   attempt_count: number;
+  /** Standing facts about the owner. Empty is the normal case. */
+  preferences?: string[];
 }
 
 /**
@@ -86,10 +89,12 @@ export interface HintSubject {
 export async function firstStepHint(env: Env, task: HintSubject): Promise<string | null> {
   if (!env.AI || env.HINTS_ENABLED === "0") return null;
 
+  const facts = (task.preferences ?? []).filter(Boolean);
   const prompt =
     `Task: ${task.title}` +
     (task.notes ? `\nWhy it matters: ${task.notes}` : "") +
-    (task.attempt_count > 1 ? `\nThey have ignored this ${task.attempt_count} times.` : "");
+    (task.attempt_count > 1 ? `\nThey have ignored this ${task.attempt_count} times.` : "") +
+    (facts.length ? `\nAbout them:\n${facts.map((f) => `- ${f}`).join("\n")}` : "");
 
   try {
     const raw = await withTimeout(

@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 100 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 104 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -16,7 +16,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 Two loops over one D1 database:
 
 - `tick.ts` — cron tick, five idempotent phases: (A) materialize occurrences 48h ahead from RRULEs, (B) catch-up digest if the worker was down 2h+, (C) expire / supersede stale chains, (D) claim due instances with a 2-minute lease, route, send, write backoff, (E) reconcile the pinned daily board. Cron does NOT retry failed runs; the DB-driven design self-heals on the next tick.
-- `hint.ts` — nag-time "first step" hints via Workers AI (`env.AI`). Bounded by a hard timeout and a per-tick budget; returns null on absolutely anything going wrong, and null means the nag sends exactly as it did before Phase 2. Never throws.
+- `hint.ts` — nag-time "first step" hints. Prompt = title + notes + attempt_count + the user's standing `preferences`. via Workers AI (`env.AI`). Bounded by a hard timeout and a per-tick budget; returns null on absolutely anything going wrong, and null means the nag sends exactly as it did before Phase 2. Never throws.
 - `board.ts` — the daily board and the quiet half of routing. Renders due / later today / missed / done, posts one pinned message per local day, edits it in place, unpins yesterday's. Never throws into the tick.
 - `index.ts` — webhook entry. Inbound: sender allowlist → dedupe on provider message id → parse (button → keyword → LLM) → applyIntent → reply → save dialog state.
 - `parser.ts` — fast keyword/regex paths first (done/snooze/list/questions — these must never cost an API call); Claude Haiku via env.ANTHROPIC_API_KEY only for novel text. Single JSON response schema, strictly normalized.
@@ -102,6 +102,32 @@ npm run db:seed   # re-seeds the four policies with their tiers
 - `HINTS_ENABLED=0` kills it; `HINT_BUDGET_PER_TICK` (default 3) bounds how many a single tick will generate.
 - What/why capture is an invitation, never a requirement: create suggests `note: ...`, which attaches to the task created in the last hour. `note for <task>: ...` works any time. Both are keyword paths — capturing context must not itself cost a model call.
 - Deploy needs no migration; `tasks.notes` already existed and was unused.
+
+## Phase 3 — personalisation (ordered)
+
+The goal: hints that know you without you spelling it out every time. Each step
+is better with the previous one in place, which is what fixes the order.
+
+1. **Preferences store — SHIPPED 19 Aug.** Standing facts ("I use Ryse protein",
+   "I shop at Costco"), captured from plain messages and injected into every
+   hint prompt. No external dependency, no new failure mode, immediate payoff.
+   Everything below is more useful once the bot knows these.
+2. **Feedback loop.** Record the hint that was shown, correlate with what
+   happened next (done fast / snoozed / skipped / expired), feed the winners
+   back as examples. This is the part that makes hints *improve* rather than
+   just be better-informed. Deliberately second: it needs weeks of real data,
+   and there is no point collecting it until hints are worth reacting to.
+3. **Apple Shortcuts bridge.** A signed webhook the iPhone can POST to, so
+   Shortcuts can push calendar events, location arrivals or Health data on
+   triggers the owner chooses. The only genuine route from phone data into the
+   bot — TikTok, Safari history and app usage have no API and are not coming.
+   Each source is its own small integration, so it waits for a concrete want.
+4. **Web enrichment.** A daily pass that looks up real-time facts (a sale on the
+   protein brand from step 1) and caches them onto the task, so the nag renders
+   something already fetched. Explicitly OFF the send path — a search
+   round-trip does not fit in the 1200ms hint budget. Last because it needs a
+   paid search key, and its failure mode is the bot confidently citing a deal
+   that does not exist.
 
 ## Backlog (not yet scheduled)
 

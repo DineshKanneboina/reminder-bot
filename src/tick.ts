@@ -97,6 +97,9 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
 
     const channels = await db.channels(userId);
     const registry = buildChannels(env);
+    // Loaded once for the whole user, not per nag: the same facts feed every
+    // hint in this tick and re-reading them per message is pure waste.
+    const facts = hintBudget > 0 ? (await db.preferences(userId)).map((r) => r.text) : [];
     const live = await db.liveForUser(userId, iso(now));
     const indexOf = new Map(live.map((i, k) => [i.id, k + 1]));
 
@@ -119,6 +122,7 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
           title: lead.title,
           notes: lead.notes,
           attempt_count: lead.attempt_count,
+          preferences: facts,
         });
         if (hint) report.hinted++;
       }

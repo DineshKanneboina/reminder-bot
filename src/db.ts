@@ -6,6 +6,7 @@ import {
   InstanceRow,
   LiveInstance,
   PolicyRow,
+  PreferenceRow,
   TaskRow,
   UserRow,
 } from "./types";
@@ -431,6 +432,29 @@ export class Db {
       .bind(userId, fromIso, untilIso)
       .all<ClosedInstance>();
     return r.results ?? [];
+  }
+
+  // ---- preferences ------------------------------------------------------
+
+  /** Standing facts, oldest first, capped so a long list can't crowd a prompt. */
+  async preferences(userId: string, limit = 12): Promise<PreferenceRow[]> {
+    const r = await this.d1
+      .prepare(`SELECT * FROM preferences WHERE user_id = ?1 ORDER BY created_at ASC LIMIT ?2`)
+      .bind(userId, limit)
+      .all<PreferenceRow>();
+    return r.results ?? [];
+  }
+
+  async addPreference(userId: string, text: string, nowIso: string): Promise<void> {
+    await this.d1
+      .prepare(`INSERT INTO preferences (id,user_id,text,created_at) VALUES (?1,?2,?3,?4)`)
+      .bind(uid(), userId, text.slice(0, 200), nowIso)
+      .run();
+  }
+
+  async deletePreference(id: string): Promise<boolean> {
+    const r = await this.d1.prepare(`DELETE FROM preferences WHERE id = ?1`).bind(id).run();
+    return (r.meta?.changes ?? 0) > 0;
   }
 
   // ---- boards -----------------------------------------------------------

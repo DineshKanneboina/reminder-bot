@@ -10,7 +10,8 @@ import { LiveInstance } from "./types";
 
 export type Intent =
   | "create" | "update" | "delete" | "complete" | "snooze" | "skip"
-  | "list" | "tasks" | "set_notes" | "set_timezone" | "set_quiet_hours"
+  | "list" | "tasks" | "set_notes" | "remember" | "forget" | "preferences"
+  | "set_timezone" | "set_quiet_hours"
   | "pause" | "resume" | "confirm" | "help" | "unknown";
 
 export interface Parsed {
@@ -33,6 +34,8 @@ export interface Parsed {
   quiet_hours: { start: string; end: string } | null;
   pause_minutes: number | null;
   clarifying_question: string | null;
+  /** A standing fact about the user, for "remember: ...". */
+  memory: string | null;
   source: "button" | "keyword" | "llm";
 }
 
@@ -46,6 +49,7 @@ const blank = (intent: Intent, source: Parsed["source"], patch: Partial<Parsed> 
   quiet_hours: null,
   pause_minutes: null,
   clarifying_question: null,
+  memory: null,
   source,
   ...patch,
 });
@@ -181,6 +185,18 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
     });
   }
 
+  // "remember: I use Ryse protein" — standing facts, kept apart from task
+  // notes because they apply to everything rather than to one reminder.
+  if ((m = /^(?:remember|note about me)\s*[:\-]\s*(.+)$/is.exec(raw.trim()))) {
+    return blank("remember", "keyword", { memory: m[1].trim() });
+  }
+  if ((m = /^forget\s+(\d+)$/.exec(text))) {
+    return blank("forget", "keyword", { target: { instance_number: parseInt(m[1], 10), instance_id: null, task_query: null } });
+  }
+  if (/^(preferences|what do you know about me|about me)$/.test(text)) {
+    return blank("preferences", "keyword");
+  }
+
   // "make book flight a one-off" / "set gym to once" — the repair for a task
   // that was created as recurring when it should only ever happen once.
   if ((m = /^(?:make|set)\s+(.+?)\s+(?:a\s+|to\s+(?:a\s+)?)?(?:one[- ]?off|one[- ]?time|once)$/.exec(text))) {
@@ -218,7 +234,7 @@ Reply with ONE JSON object and nothing else. No prose, no markdown fences.
 
 Schema:
 {
-  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_notes|set_timezone|set_quiet_hours|pause|resume|unknown",
+  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_notes|remember|preferences|set_timezone|set_quiet_hours|pause|resume|unknown",
   "confidence": 0.0-1.0,
   "target": {"instance_number": int|null, "task_query": string|null},
   "task": {"title": string|null, "notes": string|null, "rrule": string|null, "local_time": "HH:MM"|null,
@@ -228,7 +244,8 @@ Schema:
   "timezone": "IANA zone"|null,
   "quiet_hours": {"start":"HH:MM","end":"HH:MM"}|null,
   "pause_minutes": int|null,
-  "clarifying_question": string|null
+  "clarifying_question": string|null,
+  "memory": string|null
 }
 
 Rules:
@@ -287,6 +304,10 @@ Rules:
 10b. CONTEXT about an existing task — "the gym one is for my knee", "I need
    this because rent is due" — is intent "set_notes" with task_query and the
    context in task.notes. It is never a new task.
+10c. A STANDING FACT about the user rather than about one task — "I use Ryse
+   protein", "I shop at Costco", "my gym is on 5th" — is intent "remember"
+   with the fact in "memory". These apply to everything; task.notes applies to
+   one reminder. If unsure which, prefer set_notes.
 11. POLICY is how loudly it nags, and is spoken plainly. Set it on create AND on
    update, whenever the user says something about insistence:
      "just notify me", "one ping", "don't nag"        -> "notify"
@@ -389,6 +410,7 @@ export async function parseWithLlm(
           : null,
       pause_minutes: intOrNull(raw.pause_minutes),
       clarifying_question: strOrNull(raw.clarifying_question),
+      memory: strOrNull(raw.memory),
     });
     // Resolve a model-supplied index against the real live list.
     const n = p.target.instance_number;
@@ -412,7 +434,7 @@ export function needsConfirmation(p: Parsed): boolean {
 
 const INTENTS: Intent[] = [
   "create", "update", "delete", "complete", "snooze", "skip", "list", "tasks",
-  "set_notes", "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
+  "set_notes", "remember", "forget", "preferences", "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
 ];
 
 function normalizeIntent(v: unknown): Intent {
