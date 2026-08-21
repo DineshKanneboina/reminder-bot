@@ -253,7 +253,7 @@ test("the default model is one this account actually has", async () => {
   env.AI = { async run(model) { asked = model; return { response: "Start there." }; } };
 
   await runTick(env, T0);
-  assert.equal(asked, "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+  assert.equal(asked, "@cf/openai/gpt-oss-120b");
 });
 
 test("a tick that sends but never hints is visible in the report", async () => {
@@ -384,5 +384,18 @@ test("the hint timeout is configurable, and still bounds the send", async () => 
 
   assert.equal(r.sent, 1);
   assert.ok(elapsed < 3000, `sent in ${elapsed}ms, honouring the shorter timeout`);
+  assert.doesNotMatch(nags()[0], /💡/);
+});
+
+test("an unrecognized response shape is reported, not silently empty", async () => {
+  // A model that returns { output } instead of { response } would otherwise
+  // produce no hints forever, indistinguishable from a model with nothing to
+  // say. This is the same silence that hid a wrong model id for an hour.
+  seedTask();
+  env.AI = fakeAI({ output: "Clear one shelf." });
+
+  const r = await runTick(env, T0);
+  assert.equal(r.sent, 1, "the nag still goes out");
+  assert.equal(r.hinted, 0);
   assert.doesNotMatch(nags()[0], /💡/);
 });

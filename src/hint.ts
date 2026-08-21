@@ -22,12 +22,21 @@ import { Env } from "./types";
 // stable across accounts or over time, and because every failure here is
 // swallowed, a wrong id produces no hints and no error — silence that looks
 // exactly like "the feature is on and the model had nothing to add".
-// 3b could not hold eight rules in its head. It produced "Open Google Docs on
-// computer" (rule 4 forbids naming an app), "Open the fridge" for protein
-// powder, and "Open Google" — failures of capability, not of wording, after two
-// prompt rewrites. 70b at fp8 is latency-tuned and follows instructions;
-// budget bought back by hinting once per chain instead of once per nudge.
-const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+/**
+ * Verify with `npx wrangler ai models` before changing this — ids differ per
+ * account, and a wrong one produces no hints and no visible error.
+ *
+ * The history is worth keeping. llama-3.2-3b could not hold eight rules at
+ * once: "Open Google Docs on computer" against a rule forbidding app names,
+ * "Open the fridge" for protein powder. Two prompt rewrites did not fix what
+ * was a capacity ceiling, not a wording problem. llama-3.3-70b was then picked
+ * for no better reason than being the obvious large Llama — nothing else on the
+ * account was compared. gpt-oss-120b is larger, follows instructions better,
+ * and costs a THIRD as many output neurons (68,182/MTok against 204,805). At
+ * ~10 hints a day both sit inside the 10,000-neuron free tier regardless, so
+ * the only thing that ever mattered here was quality.
+ */
+const DEFAULT_MODEL = "@cf/openai/gpt-oss-120b";
 const DEFAULT_TIMEOUT_MS = 3000;
 const MAX_TOKENS = 40;
 const MAX_CHARS = 90;
@@ -115,10 +124,17 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
       console.warn("hint timed out", { model: env.HINT_MODEL ?? DEFAULT_MODEL });
       return null;
     }
-    const text =
-      raw && typeof raw === "object" && "response" in raw
-        ? String((raw as { response: unknown }).response ?? "")
-        : "";
+    // Workers AI text models return { response }. If a future model returns a
+    // different shape this would quietly yield "" forever, so say so — the
+    // whole failure class here is silence that looks like a quiet model.
+    if (!raw || typeof raw !== "object" || !("response" in raw)) {
+      console.error("hint response shape unrecognized", {
+        model: env.HINT_MODEL ?? DEFAULT_MODEL,
+        keys: raw && typeof raw === "object" ? Object.keys(raw).slice(0, 8) : typeof raw,
+      });
+      return null;
+    }
+    const text = String((raw as { response: unknown }).response ?? "");
     const clean = sanitize(text, task.title);
     if (!clean && text.trim()) {
       // A drop is as invisible as a timeout unless it says so. Log what the

@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 106 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 107 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -100,7 +100,7 @@ npm run db:seed   # re-seeds the four policies with their tiers
 
 ## Phase 2 — nag-time hints (SHIPPED)
 
-- Workers AI via the `AI` binding, NOT the Anthropic key and nothing on the owner's Mac. Model overridable with `HINT_MODEL`; default `@cf/meta/llama-3.2-3b-instruct`. **Verify any model id with `npx wrangler ai models` before shipping it** — ids differ per account, and a wrong one produces no hints and no visible error. The first default shipped did not exist.
+- Workers AI via the `AI` binding, NOT the Anthropic key and nothing on the owner's Mac. Model overridable with `HINT_MODEL`; default `@cf/openai/gpt-oss-120b`. **Verify any model id with `npx wrangler ai models` before shipping it** — ids differ per account, and a wrong one produces no hints and no visible error. The first default shipped did not exist.
 - Hint prompt = title + notes + attempt_count. Single nags only — a batched message is already a list, and one suggestion for six reminders is worse than none.
 - `HINTS_ENABLED=0` kills it; `HINT_BUDGET_PER_TICK` (default 3) bounds how many a single tick will generate.
 - What/why capture is an invitation, never a requirement: create suggests `note: ...`, which attaches to the task created in the last hour. `note for <task>: ...` works any time. Both are keyword paths — capturing context must not itself cost a model call.
