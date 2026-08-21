@@ -22,9 +22,13 @@ import { Env } from "./types";
 // stable across accounts or over time, and because every failure here is
 // swallowed, a wrong id produces no hints and no error — silence that looks
 // exactly like "the feature is on and the model had nothing to add".
-// 3b rather than something larger: the timeout is 1200ms, so latency beats depth.
-const DEFAULT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
-const TIMEOUT_MS = 1200;
+// 3b could not hold eight rules in its head. It produced "Open Google Docs on
+// computer" (rule 4 forbids naming an app), "Open the fridge" for protein
+// powder, and "Open Google" — failures of capability, not of wording, after two
+// prompt rewrites. 70b at fp8 is latency-tuned and follows instructions;
+// budget bought back by hinting once per chain instead of once per nudge.
+const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const DEFAULT_TIMEOUT_MS = 3000;
 const MAX_TOKENS = 40;
 const MAX_CHARS = 90;
 const MIN_CHARS = 4;
@@ -105,7 +109,7 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
         ],
         max_tokens: MAX_TOKENS,
       }),
-      TIMEOUT_MS,
+      Number(env.HINT_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
     );
     if (raw === null) {
       console.warn("hint timed out", { model: env.HINT_MODEL ?? DEFAULT_MODEL });

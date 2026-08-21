@@ -33,6 +33,8 @@ export interface Env {
   HINT_MODEL?: string;
   /** Max hints generated in one tick. Default 3. */
   HINT_BUDGET_PER_TICK?: string;
+  /** How long a hint may take before the nag goes without one. Default 3000. */
+  HINT_TIMEOUT_MS?: string;
 
   // Board & routing
   /** "0" disables the daily board entirely. Anything else (or unset) enables it. */

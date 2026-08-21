@@ -47,8 +47,8 @@ export interface Channel {
     text: string,
     actions?: OutboundAction[],
   ): Promise<SendResult>;
-  pin?(target: string, messageId: string): Promise<void>;
-  unpin?(target: string, messageId: string): Promise<void>;
+  pin?(target: string, messageId: string): Promise<SendResult>;
+  unpin?(target: string, messageId: string): Promise<SendResult>;
 }
 
 // ---------------------------------------------------------------- telegram
@@ -112,17 +112,17 @@ class TelegramChannel implements Channel {
     });
   }
 
-  async pin(target: string, messageId: string): Promise<void> {
-    // Silent: the board is meant to sit at the top of the chat, not to buzz.
-    await this.call("pinChatMessage", {
+  async pin(target: string, messageId: string): Promise<SendResult> {
+    // disable_notification: the board sits at the top of the chat, it doesn't buzz.
+    return this.call("pinChatMessage", {
       chat_id: target,
       message_id: Number(messageId),
       disable_notification: true,
     });
   }
 
-  async unpin(target: string, messageId: string): Promise<void> {
-    await this.call("unpinChatMessage", { chat_id: target, message_id: Number(messageId) });
+  async unpin(target: string, messageId: string): Promise<SendResult> {
+    return this.call("unpinChatMessage", { chat_id: target, message_id: Number(messageId) });
   }
 }
 
@@ -238,23 +238,24 @@ function nonThrowing(ch: Channel): Channel {
       }
     };
   }
-  // Pinning is cosmetic. A chat where the bot lacks pin rights must still get
-  // its board, so these swallow rather than surface failures.
+  // Pinning never blocks a board, but it is no longer silent: a swallowed pin
+  // failure is how yesterday's board stayed pinned for a whole day with no
+  // trace of why.
   if (ch.pin) {
     wrapped.pin = async (target, messageId) => {
       try {
-        await ch.pin!(target, messageId);
-      } catch {
-        /* ignore */
+        return await ch.pin!(target, messageId);
+      } catch (e) {
+        return { ok: false, error: String(e) };
       }
     };
   }
   if (ch.unpin) {
     wrapped.unpin = async (target, messageId) => {
       try {
-        await ch.unpin!(target, messageId);
-      } catch {
-        /* ignore */
+        return await ch.unpin!(target, messageId);
+      } catch (e) {
+        return { ok: false, error: String(e) };
       }
     };
   }

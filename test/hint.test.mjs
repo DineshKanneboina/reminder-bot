@@ -253,7 +253,7 @@ test("the default model is one this account actually has", async () => {
   env.AI = { async run(model) { asked = model; return { response: "Start there." }; } };
 
   await runTick(env, T0);
-  assert.equal(asked, "@cf/meta/llama-3.2-3b-instruct");
+  assert.equal(asked, "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
 });
 
 test("a tick that sends but never hints is visible in the report", async () => {
@@ -352,4 +352,37 @@ test("forgetting something that isn't there asks rather than guessing", async ()
   const outOfRange = await applyIntent(parseKeyword("forget 9", []), user, db, env, [], T0);
   assert.match(outOfRange.text, /Forget which\?/);
   assert.equal((await db.preferences("u1")).length, 1, "nothing was deleted");
+});
+
+test("a hint is generated once per chain, not once per nudge", async () => {
+  // Four nudges used to mean four chances to say something useless. The one
+  // that matters is the first; after that you have already read it.
+  seedTask(); // pol_push, ladder [10,20]
+  env.AI = fakeAI({ response: "Clear one shelf of books." });
+
+  await runTick(env, T0);
+  assert.equal(env.AI.calls.length, 1);
+  assert.match(nags()[0], /💡/);
+
+  for (const m of [10, 30]) await runTick(env, T0 + m * 60_000);
+  assert.equal(nags().length, 3, "the nags keep coming");
+  assert.equal(env.AI.calls.length, 1, "but the model is asked exactly once");
+  assert.doesNotMatch(nags()[1], /💡/);
+  assert.doesNotMatch(nags()[2], /💡/);
+});
+
+test("the hint timeout is configurable, and still bounds the send", async () => {
+  seedTask();
+  env.HINT_TIMEOUT_MS = "200";
+  env.AI = fakeAI(
+    () => new Promise((res) => { setTimeout(() => res({ response: "late" }), 9000).unref?.(); }),
+  );
+
+  const started = Date.now();
+  const r = await runTick(env, T0);
+  const elapsed = Date.now() - started;
+
+  assert.equal(r.sent, 1);
+  assert.ok(elapsed < 3000, `sent in ${elapsed}ms, honouring the shorter timeout`);
+  assert.doesNotMatch(nags()[0], /💡/);
 });

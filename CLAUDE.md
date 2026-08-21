@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 104 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 106 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -49,6 +49,9 @@ Two loops over one D1 database:
 - expireOverdue does NOT filter on next_nag_at. A 'notify' item is already NULL there and would otherwise sit on the board forever.
 - A policy change never supersedes live instances — they join their policy through the task and pick the new tier up on the next tick.
 - The board is a view: a failed post or edit must never cost a nag, and never fails the tick.
+- Retiring yesterday's board runs on EVERY sync, never only on the tick that creates today's. Coupled to creation it got one attempt, and one failed unpin stranded yesterday's board pinned all day.
+- Pin and unpin failures are logged, not swallowed. Cosmetic does not mean invisible.
+- One hint per chain, on the first nag only. Four nudges meant four chances to say something useless.
 - Identical board content is not re-edited (fingerprint), or every tick would burn an API call Telegram rejects as unmodified.
 - Closing something out re-reads liveForUser rather than filtering the `live` snapshot. That snapshot predates the change, so its numbering is one ahead of what the numbers in the very same reply must resolve to.
 - Any list that can carry an item past midnight dates it (whenLabel). A bare clock time under today's heading reads as today.

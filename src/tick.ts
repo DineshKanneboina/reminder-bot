@@ -113,10 +113,13 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
     for (const group of groups) {
       const lead = group[0];
       const startIdx = indexOf.get(lead.id) ?? 1;
-      // Only single nags get a hint. A batched message is already a list, and
-      // one suggestion attached to six reminders would be worse than none.
+      // Only single nags get a hint, and only the FIRST nag of a chain. A
+      // batched message is already a list. And by the fourth nudge you have
+      // read the suggestion — a different one each time reads as the bot
+      // casting around, and four chances to say something useless beat one.
+      // Spending the budget once per chain is what pays for a bigger model.
       let hint: string | null = null;
-      if (group.length === 1 && hintBudget > 0) {
+      if (group.length === 1 && lead.attempt_count <= 1 && hintBudget > 0) {
         hintBudget--;
         hint = await firstStepHint(env, {
           title: lead.title,
