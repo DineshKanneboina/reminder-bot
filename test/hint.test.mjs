@@ -399,3 +399,14 @@ test("an unrecognized response shape is reported, not silently empty", async () 
   assert.equal(r.hinted, 0);
   assert.doesNotMatch(nags()[0], /💡/);
 });
+
+test("asking what the bot knows about you is not answered with the manual", () => {
+  // The help catch-all matches "what do you ...", so this used to return the
+  // command list instead of the standing facts it was actually asking for.
+  for (const phrase of ["preferences", "about me", "what do you know about me"]) {
+    assert.equal(parseKeyword(phrase, []).intent, "preferences", phrase);
+  }
+  // and the general questions still reach help
+  assert.equal(parseKeyword("what can you do", []).intent, "help");
+  assert.equal(parseKeyword("how do i use this", []).intent, "help");
+});

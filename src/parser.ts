@@ -152,6 +152,11 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
 
   if (/^(list|open|now|today|what'?s? (?:open|due))$/.test(text)) return blank("list", "keyword");
   if (/^(tasks|reminders|all)$/.test(text)) return blank("tasks", "keyword");
+  // Before the help catch-all below: that regex matches "what do you ...",
+  // which swallowed "what do you know about me" and answered with the manual.
+  if (/^(preferences|about me|what do you know about me)$/.test(text)) {
+    return blank("preferences", "keyword");
+  }
   if (/^(help|\?|start|\/start|\/help)$/.test(text)) return blank("help", "keyword");
   // Common questions about the bot itself — answer with help, skip the model.
   if (/what (can|do) (you|u)|what are (you|your)|how do (you|i|this)|what.*buttons?|capabilit/i.test(text)) {
@@ -193,10 +198,6 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
   if ((m = /^forget\s+(\d+)$/.exec(text))) {
     return blank("forget", "keyword", { target: { instance_number: parseInt(m[1], 10), instance_id: null, task_query: null } });
   }
-  if (/^(preferences|what do you know about me|about me)$/.test(text)) {
-    return blank("preferences", "keyword");
-  }
-
   // "make book flight a one-off" / "set gym to once" — the repair for a task
   // that was created as recurring when it should only ever happen once.
   if ((m = /^(?:make|set)\s+(.+?)\s+(?:a\s+|to\s+(?:a\s+)?)?(?:one[- ]?off|one[- ]?time|once)$/.exec(text))) {

@@ -152,7 +152,9 @@ nag goes out on time without one, which is the normal case rather than an error.
 | `pause 2h` · `resume` | mute without losing anything |
 | `set timezone to Asia/Tokyo` | existing reminders follow you |
 | `delete gym` | asks for confirmation first |
-| `note for gym: ...` | context that makes the nudges better |
+| `note for gym: ...` | context for one reminder |
+| `remember: I use Ryse protein` | a standing fact, used on every nudge |
+| `preferences` · `forget 2` | see what it knows, drop one |
 | `help` | the above, in the chat |
 
 A one-off that has already happened isn't deleted automatically — it moves to
@@ -326,7 +328,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 107 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 108 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run check     # the deploy gate, minus the checks that need network
 npm run dev       # local worker + local D1
