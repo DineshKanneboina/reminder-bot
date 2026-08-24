@@ -410,3 +410,18 @@ test("asking what the bot knows about you is not answered with the manual", () =
   assert.equal(parseKeyword("what can you do", []).intent, "help");
   assert.equal(parseKeyword("how do i use this", []).intent, "help");
 });
+
+test("gpt-oss's OpenAI-style response shape is understood", async () => {
+  // The real production failure of 22-24 Aug: gpt-oss returns
+  // { choices: [{ message: { content } }] }, not { response }, despite the
+  // model docs. Every hint died at extraction for three days.
+  seedTask({ notes: "the tub is in the garage" });
+  env.AI = fakeAI({
+    choices: [{ message: { content: "Check the garage shelf for the old tub." } }],
+    model: "gpt-oss-120b", object: "chat.completion",
+  });
+
+  const r = await runTick(env, T0);
+  assert.equal(r.hinted, 1);
+  assert.match(nags()[0], /Check the garage shelf/);
+});

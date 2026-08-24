@@ -124,17 +124,20 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
       console.warn("hint timed out", { model: env.HINT_MODEL ?? DEFAULT_MODEL });
       return null;
     }
-    // Workers AI text models return { response }. If a future model returns a
-    // different shape this would quietly yield "" forever, so say so — the
-    // whole failure class here is silence that looks like a quiet model.
-    if (!raw || typeof raw !== "object" || !("response" in raw)) {
+    // Two shapes exist in the wild. Most Workers AI text models return
+    // { response }; gpt-oss returns OpenAI-style { choices: [{ message:
+    // { content } }] } — despite Cloudflare's model page documenting
+    // `response`. That mismatch silently killed every hint for three days;
+    // only the shape log below made it findable. Anything else is reported,
+    // never quietly treated as an empty answer.
+    const text = extractText(raw);
+    if (text === null) {
       console.error("hint response shape unrecognized", {
         model: env.HINT_MODEL ?? DEFAULT_MODEL,
         keys: raw && typeof raw === "object" ? Object.keys(raw).slice(0, 8) : typeof raw,
       });
       return null;
     }
-    const text = String((raw as { response: unknown }).response ?? "");
     const clean = sanitize(text, task.title);
     if (!clean && text.trim()) {
       // A drop is as invisible as a timeout unless it says so. Log what the
@@ -151,6 +154,17 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
     console.error("hint failed", { model: env.HINT_MODEL ?? DEFAULT_MODEL, error: String(e) });
     return null;
   }
+}
+
+/** The generated text out of either Workers AI response shape, else null. */
+function extractText(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  if ("response" in raw) return String((raw as { response: unknown }).response ?? "");
+  const choices = (raw as { choices?: unknown }).choices;
+  if (Array.isArray(choices) && choices[0]?.message?.content !== undefined) {
+    return String(choices[0].message.content ?? "");
+  }
+  return null;
 }
 
 /**
