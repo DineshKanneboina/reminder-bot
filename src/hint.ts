@@ -26,17 +26,18 @@ import { Env } from "./types";
  * Verify with `npx wrangler ai models` before changing this — ids differ per
  * account, and a wrong one produces no hints and no visible error.
  *
- * The history is worth keeping. llama-3.2-3b could not hold eight rules at
- * once: "Open Google Docs on computer" against a rule forbidding app names,
- * "Open the fridge" for protein powder. Two prompt rewrites did not fix what
- * was a capacity ceiling, not a wording problem. llama-3.3-70b was then picked
- * for no better reason than being the obvious large Llama — nothing else on the
- * account was compared. gpt-oss-120b is larger, follows instructions better,
- * and costs a THIRD as many output neurons (68,182/MTok against 204,805). At
- * ~10 hints a day both sit inside the 10,000-neuron free tier regardless, so
- * the only thing that ever mattered here was quality.
+ * The history is worth keeping. llama-3.2-3b could not hold eight rules
+ * (capacity, not wording — two prompt rewrites changed nothing). gpt-oss-120b
+ * looked better on paper and failed twice in practice: it returns OpenAI-style
+ * { choices } rather than the documented { response }, and it is a REASONING
+ * model — under max_tokens 40 it spends the whole budget thinking and emits
+ * empty content. A reasoning model is the wrong tool for a 12-word imperative
+ * on a 3-second budget. 70b-fp8-fast is non-reasoning, instruction-capable,
+ * and answers in the shape it documents. All of these fit the 10k-neuron/day
+ * free tier at ~10 hints/day; quality and fit are the only criteria that ever
+ * mattered. `npm run e2e` verifies a candidate in 90 seconds — use it.
  */
-const DEFAULT_MODEL = "@cf/openai/gpt-oss-120b";
+const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const DEFAULT_TIMEOUT_MS = 3000;
 const MAX_TOKENS = 40;
 const MAX_CHARS = 90;
@@ -136,6 +137,13 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
         model: env.HINT_MODEL ?? DEFAULT_MODEL,
         keys: raw && typeof raw === "object" ? Object.keys(raw).slice(0, 8) : typeof raw,
       });
+      return null;
+    }
+    // An EMPTY answer logs too. gpt-oss returned "" for every single hint —
+    // reasoning models spend max_tokens thinking — and empty was the one path
+    // that said nothing anywhere.
+    if (!text.trim()) {
+      console.warn("hint empty", { model: env.HINT_MODEL ?? DEFAULT_MODEL });
       return null;
     }
     const clean = sanitize(text, task.title);

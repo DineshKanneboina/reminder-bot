@@ -253,7 +253,7 @@ test("the default model is one this account actually has", async () => {
   env.AI = { async run(model) { asked = model; return { response: "Start there." }; } };
 
   await runTick(env, T0);
-  assert.equal(asked, "@cf/openai/gpt-oss-120b");
+  assert.equal(asked, "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
 });
 
 test("a tick that sends but never hints is visible in the report", async () => {
