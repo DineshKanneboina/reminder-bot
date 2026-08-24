@@ -93,6 +93,8 @@ export interface HintSubject {
   attempt_count: number;
   /** Standing facts about the owner. Empty is the normal case. */
   preferences?: string[];
+  /** Cached web research for this task, if any. */
+  research?: string | null;
 }
 
 /**
@@ -108,7 +110,8 @@ export async function firstStepHint(env: Env, task: HintSubject): Promise<string
     `Task: ${task.title}` +
     (task.notes ? `\nWhy it matters: ${task.notes}` : "") +
     (task.attempt_count > 1 ? `\nThey have ignored this ${task.attempt_count} times.` : "") +
-    (facts.length ? `\nAbout them:\n${facts.map((f) => `- ${f}`).join("\n")}` : "");
+    (facts.length ? `\nAbout them:\n${facts.map((f) => `- ${f}`).join("\n")}` : "") +
+    (task.research ? `\nCurrent info (from a web check):\n${task.research}` : "");
 
   try {
     const raw = await withTimeout(

@@ -2,6 +2,7 @@ import {
   BoardRow,
   ChannelRow,
   ClosedInstance,
+  EnrichmentRow,
   Env,
   InstanceRow,
   LiveInstance,
@@ -215,6 +216,7 @@ export class Db {
             WHERE task_id = ?1 AND state IN ('pending','notified')`,
         )
         .bind(id),
+      this.d1.prepare(`DELETE FROM enrichments WHERE task_id = ?1`).bind(id),
     ]);
   }
 
@@ -455,6 +457,62 @@ export class Db {
   async deletePreference(id: string): Promise<boolean> {
     const r = await this.d1.prepare(`DELETE FROM preferences WHERE id = ?1`).bind(id).run();
     return (r.meta?.changes ?? 0) > 0;
+  }
+
+  // ---- enrichments -------------------------------------------------------
+
+  /** Configure (or reconfigure) research for a task. Due immediately. */
+  async putEnrichmentConfig(taskId: string, query: string, nowIso: string): Promise<void> {
+    await this.d1
+      .prepare(
+        `INSERT INTO enrichments (task_id, query, created_at) VALUES (?1,?2,?3)
+         ON CONFLICT(task_id) DO UPDATE SET
+           query = excluded.query, result = NULL, sources = NULL,
+           fetched_at = NULL, expires_at = NULL`,
+      )
+      .bind(taskId, query.slice(0, 300), nowIso)
+      .run();
+  }
+
+  async deleteEnrichment(taskId: string): Promise<boolean> {
+    const r = await this.d1.prepare(`DELETE FROM enrichments WHERE task_id = ?1`).bind(taskId).run();
+    return (r.meta?.changes ?? 0) > 0;
+  }
+
+  /** Configs whose cache is missing or expired, oldest first. Active tasks only. */
+  async dueEnrichments(nowIso: string, limit: number): Promise<EnrichmentRow[]> {
+    const r = await this.d1
+      .prepare(
+        `SELECT e.* FROM enrichments e JOIN tasks t ON t.id = e.task_id
+          WHERE t.active = 1 AND (e.expires_at IS NULL OR e.expires_at < ?1)
+          ORDER BY e.fetched_at IS NOT NULL, e.fetched_at ASC LIMIT ?2`,
+      )
+      .bind(nowIso, limit)
+      .all<EnrichmentRow>();
+    return r.results ?? [];
+  }
+
+  async saveEnrichment(
+    taskId: string,
+    result: string | null,
+    sources: string[] | null,
+    fetchedIso: string,
+    expiresIso: string,
+  ): Promise<void> {
+    await this.d1
+      .prepare(
+        `UPDATE enrichments SET result = ?2, sources = ?3, fetched_at = ?4, expires_at = ?5
+          WHERE task_id = ?1`,
+      )
+      .bind(taskId, result, sources ? JSON.stringify(sources) : null, fetchedIso, expiresIso)
+      .run();
+  }
+
+  async enrichmentFor(taskId: string): Promise<EnrichmentRow | null> {
+    return this.d1
+      .prepare(`SELECT * FROM enrichments WHERE task_id = ?1`)
+      .bind(taskId)
+      .first<EnrichmentRow>();
   }
 
   // ---- boards -----------------------------------------------------------

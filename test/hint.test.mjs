@@ -354,21 +354,22 @@ test("forgetting something that isn't there asks rather than guessing", async ()
   assert.equal((await db.preferences("u1")).length, 1, "nothing was deleted");
 });
 
-test("a hint is generated once per chain, not once per nudge", async () => {
-  // Four nudges used to mean four chances to say something useless. The one
-  // that matters is the first; after that you have already read it.
+test("every nudge carries a hint, and the model knows which nudge it is", async () => {
+  // Owner's decision (24 Aug), reversing once-per-chain: each notification
+  // gets its own suggestion, and the prompt escalates with attempt_count so
+  // nudge three can say something different from nudge one.
   seedTask(); // pol_push, ladder [10,20]
   env.AI = fakeAI({ response: "Clear one shelf of books." });
 
   await runTick(env, T0);
-  assert.equal(env.AI.calls.length, 1);
-  assert.match(nags()[0], /💡/);
-
   for (const m of [10, 30]) await runTick(env, T0 + m * 60_000);
-  assert.equal(nags().length, 3, "the nags keep coming");
-  assert.equal(env.AI.calls.length, 1, "but the model is asked exactly once");
-  assert.doesNotMatch(nags()[1], /💡/);
-  assert.doesNotMatch(nags()[2], /💡/);
+
+  assert.equal(nags().length, 3);
+  assert.equal(env.AI.calls.length, 3, "one generation per notification");
+  for (const n of nags()) assert.match(n, /💡/);
+  // Later nudges tell the model how long this has been ignored.
+  assert.match(askedAbout(env.AI.calls[1]), /ignored this 2 times/);
+  assert.match(askedAbout(env.AI.calls[2]), /ignored this 3 times/);
 });
 
 test("the hint timeout is configurable, and still bounds the send", async () => {

@@ -323,6 +323,25 @@ export async function applyIntent(
     case "preferences":
       return { text: renderPreferences(await db.preferences(user.id)) };
 
+    case "research": {
+      const found = await resolveTask(db, user.id, p);
+      if ("error" in found) return { text: found.error };
+      if (!p.task.notes) {
+        const had = await db.deleteEnrichment(found.task.id);
+        return {
+          text: had
+            ? `🔎 Stopped looking things up for <b>${esc(found.task.title)}</b>.`
+            : `Nothing being researched for <b>${esc(found.task.title)}</b>. Start with <code>research ${esc(found.task.title)}: what to look for</code>.`,
+        };
+      }
+      await db.putEnrichmentConfig(found.task.id, p.task.notes, iso(now));
+      return {
+        text:
+          `🔎 On it — I'll check the web for <i>${esc(p.task.notes)}</i> within a couple of minutes, ` +
+          `then re-check daily. What I find rides on <b>${esc(found.task.title)}</b>'s nags, with sources and age.`,
+      };
+    }
+
     case "tasks":
       return { text: renderTaskList(await db.tasksForUser(user.id), now) };
 
@@ -530,6 +549,7 @@ start nagging if you leave them there.
 • <code>set timezone to Asia/Tokyo</code>
 • <code>note for gym: knee is bad, start with 5 min</code> — better nudges
 • <code>remember: I use Ryse protein</code> — things that apply to everything
+• <code>research protein: best current price for Ryse</code> — daily web check, shown on the nag
 • <code>preferences</code> / <code>forget 2</code>
 • <code>delete gym</code>
 

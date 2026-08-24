@@ -138,3 +138,19 @@ CREATE TABLE IF NOT EXISTS tick_log (
   report TEXT NOT NULL,
   error  TEXT
 );
+
+-- Web research attached to a task: "what's the current price of Ryse protein".
+-- Refreshed by the tick OFF the send path (phase F, budgeted, after all sends)
+-- and cached here; the nag only ever renders what is already fetched. The
+-- failure mode this design exists to avoid is a nag waiting on a search — or
+-- worse, confidently citing a deal nobody verified: results carry their
+-- sources and their age, always.
+CREATE TABLE IF NOT EXISTS enrichments (
+  task_id    TEXT PRIMARY KEY REFERENCES tasks(id),
+  query      TEXT NOT NULL,
+  result     TEXT,
+  sources    TEXT,
+  fetched_at TEXT,
+  expires_at TEXT,
+  created_at TEXT NOT NULL
+);

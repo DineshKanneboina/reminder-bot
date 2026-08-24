@@ -97,15 +97,21 @@ export function renderNag(
   total: number,
   /** Optional first-step suggestion. Null renders exactly as it did before. */
   hint?: string | null,
+  /** Cached, attributed web research. The label carries source + age — a
+   *  price claim with neither must never render. */
+  research?: { text: string; label: string } | null,
 ) {
   const nth = inst.attempt_count > 1 ? ` · ${ordinal(inst.attempt_count)} nudge` : "";
   const head = total > 1 ? `${index}. ` : "";
   // esc even though hint.ts already drops angle brackets: this is model output
   // going into an HTML message, and one guard is not a guard.
   const tip = hint ? `\n💡 <i>${esc(hint)}</i>` : "";
+  const looked = research
+    ? `\n🔎 ${esc(research.text)}\n<i>${esc(research.label)}</i>`
+    : "";
   const text =
     `⏰ ${head}<b>${esc(inst.title)}</b>\n` +
-    `<i>due ${clock(inst.scheduled_for, inst.timezone)}${nth}</i>${tip}`;
+    `<i>due ${clock(inst.scheduled_for, inst.timezone)}${nth}</i>${tip}${looked}`;
   // A one-off has no tomorrow, so Done is unambiguous: it finishes the task
   // for good. A recurring nag deliberately has NO done button — the owner's
   // call, after "Done" on a daily read as "handled forever" and it wasn't:

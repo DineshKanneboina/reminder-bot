@@ -54,6 +54,7 @@ async function cleanup() {
   try {
     d1(`DELETE FROM reminder_instances WHERE task_id LIKE 'e2e_%'`);
     d1(`DELETE FROM tasks WHERE id LIKE 'e2e_%'`);
+    d1(`DELETE FROM escalation_policies WHERE id='pol_e2e'`);
     console.log("  cleaned up test rows");
   } catch (e) {
     console.error(`  CLEANUP FAILED — remove manually: DELETE FROM tasks WHERE id LIKE 'e2e_%'  (${e})`);
@@ -95,10 +96,16 @@ try {
   // what this phase exists to prove — is the ladder: after the first nag a
   // recurring chain must have its NEXT nag scheduled, where the one-off's
   // machinery is identical up to that point.
+  // A fast test policy: 1-minute ladder rungs so the SECOND nag arrives inside
+  // the suite's patience, proving per-notification hints on the real cron.
+  d1(
+    `INSERT OR REPLACE INTO escalation_policies VALUES ` +
+      `('pol_e2e',NULL,'e2e','[1,1]','["primary"]',30,NULL,NULL,6,'urgent')`,
+  );
   d1(
     `INSERT INTO tasks VALUES ('${RTASK_ID}','${userId}','[TEST] daily stretch',` +
       `'automated test — the mat is rolled up behind the couch','FREQ=DAILY',` +
-      `'${iso(now - 86_400_000)}','12:00','America/Chicago','pol_urgent','supersede',1,'${iso(now)}','${iso(now)}')`,
+      `'${iso(now - 86_400_000)}','12:00','America/Chicago','pol_e2e','supersede',1,'${iso(now)}','${iso(now)}')`,
   );
   d1(
     `INSERT INTO reminder_instances VALUES ('${RINST_ID}','${RTASK_ID}','${userId}',` +
@@ -128,14 +135,34 @@ try {
     rinst ? `state=${rinst.state} attempts=${rinst.attempt_count}` : "instance vanished",
   );
 
-  // The recurring chain's defining property: the ladder is ALIVE. pol_urgent
-  // is [5,5,10,15,30], so after nag one the next is scheduled ~5 minutes out.
-  // The one-off shares every step up to here; this is where they diverge.
+  // The recurring chain's defining property: the ladder is ALIVE. The e2e
+  // policy ladder is [1,1], so the next nag is scheduled ~1 minute out.
   const nextMin = rinst?.next_nag_at ? (Date.parse(rinst.next_nag_at) - Date.now()) / 60000 : null;
   step(
     "recurring ladder is live (next nag scheduled)",
-    nextMin !== null && nextMin > 0 && nextMin < 7,
+    nextMin !== null && nextMin > -1 && nextMin < 3,
     nextMin !== null ? `next nag in ${nextMin.toFixed(1)}m` : "next_nag_at is NULL — chain dead after one nag",
+  );
+
+  // Per-notification hints (owner's decision): clear the stored hint, wait for
+  // nudge two on the real cron, and require it to be REGENERATED. A cleared
+  // column that stays NULL means nudge two went out hintless.
+  d1(`UPDATE reminder_instances SET last_hint=NULL WHERE id='${RINST_ID}'`);
+  console.log("  waiting for nudge two (1-minute test ladder)…");
+  let second = null;
+  for (let i = 0; i < 12; i++) {
+    await sleep(10_000);
+    [second] = d1(`SELECT attempt_count, last_hint FROM reminder_instances WHERE id='${RINST_ID}'`);
+    if (second && second.attempt_count >= 2 && second.last_hint) break;
+    process.stdout.write(".");
+  }
+  console.log("");
+  step(
+    "nudge two carries its OWN hint",
+    !!second && second.attempt_count >= 2 && !!second.last_hint,
+    second
+      ? `attempts=${second.attempt_count} hint=${second.last_hint ? `“${second.last_hint}”` : "ABSENT"}`
+      : "no second nag inside 2 minutes",
   );
 
   // 5. The hint. Stored on the instance at send time, so the exact text the

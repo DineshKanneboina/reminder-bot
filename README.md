@@ -161,6 +161,7 @@ nag goes out on time without one, which is the normal case rather than an error.
 | `delete gym` | asks for confirmation first |
 | `note for gym: ...` | context for one reminder |
 | `remember: I use Ryse protein` | a standing fact, used on every nudge |
+| `research protein: best Ryse price` | daily web check, shown on the nag with sources |
 | `preferences` · `forget 2` | see what it knows, drop one |
 | `help` | the above, in the chat |
 
@@ -335,7 +336,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 116 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 124 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run check     # the deploy gate, minus the checks that need network
 npm run e2e       # live production test: create → real cron nag → hint → cleanup (~90s)

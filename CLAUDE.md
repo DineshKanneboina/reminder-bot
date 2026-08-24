@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 116 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 124 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -18,6 +18,7 @@ Two loops over one D1 database:
 
 - `tick.ts` — cron tick, five idempotent phases: (A) materialize occurrences 48h ahead from RRULEs, (B) catch-up digest if the worker was down 2h+, (C) expire / supersede stale chains, (D) claim due instances with a 2-minute lease, route, send, write backoff, (E) reconcile the pinned daily board. Cron does NOT retry failed runs; the DB-driven design self-heals on the next tick.
 - `hint.ts` — nag-time "first step" hints. Prompt = title + notes + attempt_count + the user's standing `preferences`. via Workers AI (`env.AI`). Bounded by a hard timeout and a per-tick budget; returns null on absolutely anything going wrong, and null means the nag sends exactly as it did before Phase 2. Never throws.
+- `enrich.ts` — task research via Anthropic server-side web search (the one PAID call: ~1-2¢/refresh). Phase F of the tick, strictly after all sends; one refresh per tick; results cached in `enrichments` and only ever READ on the send path. Attributed or absent: an answer with no citations is dropped, and every rendered result carries its sources and age.
 - `board.ts` — the daily board and the quiet half of routing. Renders due / later today / missed / done, posts one pinned message per local day, edits it in place, unpins yesterday's. Never throws into the tick.
 - `index.ts` — webhook entry. Inbound: sender allowlist → dedupe on provider message id → parse (button → keyword → LLM) → applyIntent → reply → save dialog state.
 - `parser.ts` — fast keyword/regex paths first (done/snooze/list/questions — these must never cost an API call); Claude Haiku via env.ANTHROPIC_API_KEY only for novel text. Single JSON response schema, strictly normalized.
@@ -61,7 +62,8 @@ Two loops over one D1 database:
 - The board is a view: a failed post or edit must never cost a nag, and never fails the tick.
 - Retiring yesterday's board runs on EVERY sync, never only on the tick that creates today's. Coupled to creation it got one attempt, and one failed unpin stranded yesterday's board pinned all day.
 - Pin and unpin failures are logged, not swallowed. Cosmetic does not mean invisible.
-- One hint per chain, on the first nag only. Four nudges meant four chances to say something useless.
+- Research never runs on the send path (phase F is last) and never renders unsourced: no citations → dropped; rendered results always carry `domain · age`. A failed search keeps the stale cache and defers retry — stale beats gone, and neither fails the tick.
+- Every single (non-batched) nag gets its own hint, budget permitting — owner reversed once-per-chain on 24 Aug. The prompt carries attempt_count so later nudges escalate instead of repeating. HINT_BUDGET_PER_TICK is the cost ceiling.
 - Identical board content is not re-edited (fingerprint), or every tick would burn an API call Telegram rejects as unmodified.
 - Closing something out re-reads liveForUser rather than filtering the `live` snapshot. That snapshot predates the change, so its numbering is one ahead of what the numbers in the very same reply must resolve to.
 - Any list that can carry an item past midnight dates it (whenLabel). A bare clock time under today's heading reads as today.
@@ -135,12 +137,12 @@ is better with the previous one in place, which is what fixes the order.
    triggers the owner chooses. The only genuine route from phone data into the
    bot — TikTok, Safari history and app usage have no API and are not coming.
    Each source is its own small integration, so it waits for a concrete want.
-4. **Web enrichment.** A daily pass that looks up real-time facts (a sale on the
-   protein brand from step 1) and caches them onto the task, so the nag renders
-   something already fetched. Explicitly OFF the send path — a search
-   round-trip does not fit in the 1200ms hint budget. Last because it needs a
-   paid search key, and its failure mode is the bot confidently citing a deal
-   that does not exist.
+4. **Web enrichment — SHIPPED 24 Aug.** `research <task>: <query>` attaches a
+   daily web lookup (Anthropic web_search_20250305 + Haiku via the existing
+   ANTHROPIC_API_KEY — no new vendor). Refreshed in tick phase F after all
+   sends, cached, rendered on nags with sources and age, fed to the hint
+   prompt as context. `stop research <task>` / ENRICH_ENABLED=0 stop the
+   spend; cached results keep rendering.
 
 ## Backlog (not yet scheduled)
 

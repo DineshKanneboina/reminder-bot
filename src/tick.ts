@@ -9,6 +9,7 @@
 import { syncBoards } from "./board";
 import { buildChannels, resolveTarget } from "./channels";
 import { Db, uid } from "./db";
+import { researchLabel, runResearch, sanitizeResearch } from "./enrich";
 import { firstStepHint } from "./hint";
 import { isOneOff, occurrencesBetween } from "./rrule";
 import { renderBatch, renderCatchUp, renderNag } from "./render";
@@ -27,6 +28,8 @@ export interface TickReport {
   parked: number;
   /** Nags that carried a hint. `sent` high with `hinted` at 0 means hints are broken. */
   hinted: number;
+  /** Research refreshes performed this tick (budget: 1). */
+  enriched: number;
 }
 
 const DEFAULT_QUIET_AGING_HOURS = 4;
@@ -35,7 +38,7 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
   const db = Db.from(env);
   const report: TickReport = {
     materialized: 0, expired: 0, superseded: 0, claimed: 0, sent: 0, failed: 0, caughtUp: 0,
-    parked: 0, hinted: 0,
+    parked: 0, hinted: 0, enriched: 0,
   };
 
   // Every tick leaves a row, even — especially — the ones that die. A weekend
@@ -132,19 +135,34 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
     for (const group of groups) {
       const lead = group[0];
       const startIdx = indexOf.get(lead.id) ?? 1;
-      // Only single nags get a hint, and only the FIRST nag of a chain. A
-      // batched message is already a list. And by the fourth nudge you have
-      // read the suggestion — a different one each time reads as the bot
-      // casting around, and four chances to say something useless beat one.
-      // Spending the budget once per chain is what pays for a bigger model.
+      // Every single nag gets a hint (owner's decision, 24 Aug, reversing
+      // once-per-chain): the prompt carries attempt_count, so later nudges
+      // can escalate rather than repeat. Batched messages still get none —
+      // one suggestion for six reminders is worse than silence. The per-tick
+      // budget is the cost ceiling, and a nag over budget goes hintless,
+      // which is already the designed failure mode.
       let hint: string | null = null;
-      if (group.length === 1 && lead.attempt_count <= 1 && hintBudget > 0) {
+      let research: { text: string; label: string } | null = null;
+      if (group.length === 1) {
+        // Cached research, never a live lookup: phase F refreshes after all
+        // sends, this only reads. Stale-but-recent still shows, with its age
+        // on it — the label is the honesty mechanism.
+        const enr = await db.enrichmentFor(lead.task_id);
+        if (enr?.result && enr.fetched_at && now - ms(enr.fetched_at) < 36 * 3600_000) {
+          research = {
+            text: enr.result,
+            label: researchLabel(JSON.parse(enr.sources ?? "[]"), enr.fetched_at, now),
+          };
+        }
+      }
+      if (group.length === 1 && hintBudget > 0) {
         hintBudget--;
         hint = await firstStepHint(env, {
           title: lead.title,
           notes: lead.notes,
           attempt_count: lead.attempt_count,
           preferences: facts,
+          research: research?.text ?? null,
         });
         if (hint) report.hinted++;
       }
@@ -152,7 +170,7 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
       const { text, actions } =
         group.length > 1
           ? renderBatch(group, startIdx)
-          : renderNag(lead, startIdx, live.length, hint);
+          : renderNag(lead, startIdx, live.length, hint, research);
 
       const step = Math.max(0, lead.escalation_step - 1);
       const ladder = safeJson<string[]>(lead.channel_ladder, ["primary"]);
@@ -183,6 +201,8 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
     }
   }
 
+  // --- Phase F is below E; research must never precede a send --------------
+
   // --- Phase E: reconcile the pinned daily board ---------------------------
   // Last, so it reflects everything the phases above just did. Never allowed to
   // throw: the board is a view, and a broken view must not fail the tick.
@@ -196,6 +216,27 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
     report.superseded + report.caughtUp + report.materialized > 0;
   if (activity || new Date(now).getUTCMinutes() % 5 === 0) {
     await syncBoards(env, db, now).catch((e) => console.error("board phase failed", e));
+  }
+
+  // --- Phase F: refresh ONE due research config ----------------------------
+  // Last on purpose. This is the only paid, slow call in the system (a web
+  // search can take 10-20s of wall time), so it runs after every send and
+  // board write has already happened, one per tick, and a failure re-queues
+  // in a few hours rather than erroring the tick.
+  if (env.ENRICH_ENABLED !== "0" && env.ANTHROPIC_API_KEY) {
+    const [due] = await db.dueEnrichments(iso(now), 1);
+    if (due) {
+      report.enriched = 1;
+      const found = await runResearch(env, due.query);
+      const refreshH = Number(env.ENRICH_REFRESH_HOURS ?? 24);
+      if (found) {
+        await db.saveEnrichment(due.task_id, found.summary, found.sources, iso(now), iso(now + refreshH * 3600_000));
+      } else {
+        // Keep whatever was cached; just don't retry every single tick.
+        await db.saveEnrichment(due.task_id, due.result, due.sources ? JSON.parse(due.sources) : null, due.fetched_at ?? iso(now), iso(now + 4 * 3600_000));
+        report.enriched = 0;
+      }
+    }
   }
 }
 

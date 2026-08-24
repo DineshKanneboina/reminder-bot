@@ -36,6 +36,15 @@ export interface Env {
   /** How long a hint may take before the nag goes without one. Default 3000. */
   HINT_TIMEOUT_MS?: string;
 
+  // Web enrichment (task research). Uses ANTHROPIC_API_KEY server-side web
+  // search — the one paid call in the system, so it is budgeted hard: one
+  // refresh per tick, each config refreshed once per ENRICH_REFRESH_HOURS.
+  /** "0" disables research refreshes (cached results still render). */
+  ENRICH_ENABLED?: string;
+  ENRICH_MODEL?: string;
+  /** How long a research result stays fresh. Default 24. */
+  ENRICH_REFRESH_HOURS?: string;
+
   // Board & routing
   /** "0" disables the daily board entirely. Anything else (or unset) enables it. */
   BOARD_ENABLED?: string;
@@ -153,6 +162,17 @@ export interface PreferenceRow {
   id: string;
   user_id: string;
   text: string;
+  created_at: string;
+}
+
+/** One task's research config + latest cached result. */
+export interface EnrichmentRow {
+  task_id: string;
+  query: string;
+  result: string | null;
+  sources: string | null;
+  fetched_at: string | null;
+  expires_at: string | null;
   created_at: string;
 }
 

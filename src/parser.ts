@@ -10,7 +10,7 @@ import { LiveInstance } from "./types";
 
 export type Intent =
   | "create" | "update" | "delete" | "complete" | "snooze" | "skip"
-  | "list" | "tasks" | "set_notes" | "remember" | "forget" | "preferences"
+  | "list" | "tasks" | "set_notes" | "remember" | "forget" | "preferences" | "research"
   | "set_timezone" | "set_quiet_hours"
   | "pause" | "resume" | "confirm" | "help" | "unknown";
 
@@ -203,6 +203,24 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
   if ((m = /^forget\s+(\d+)$/.exec(text))) {
     return blank("forget", "keyword", { target: { instance_number: parseInt(m[1], 10), instance_id: null, task_query: null } });
   }
+  // "research protein powder: current price of Ryse on Amazon" — attach a
+  // daily web lookup to a task. Deterministic, like every config-changing
+  // command. The query rides in task.notes (documented convention).
+  if ((m = /^(?:research|look ?up)\s+(?:for\s+)?(.+?)\s*[:\-]\s*(.+)$/is.exec(raw.trim()))) {
+    return blank("research", "keyword", {
+      target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
+      task: {
+        title: null, notes: m[2].trim(), rrule: null, local_time: null,
+        start_date: null, policy: null, overlap: null,
+      },
+    });
+  }
+  if ((m = /^stop\s+(?:research(?:ing)?|look(?:ing)? ?up)\s+(?:for\s+)?(.+)$/i.exec(text))) {
+    return blank("research", "keyword", {
+      target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
+    });
+  }
+
   // "make book flight a one-off" / "set gym to once" — the repair for a task
   // that was created as recurring when it should only ever happen once.
   if ((m = /^(?:make|set)\s+(.+?)\s+(?:a\s+|to\s+(?:a\s+)?)?(?:one[- ]?off|one[- ]?time|once)$/.exec(text))) {
@@ -240,7 +258,7 @@ Reply with ONE JSON object and nothing else. No prose, no markdown fences.
 
 Schema:
 {
-  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_notes|remember|preferences|set_timezone|set_quiet_hours|pause|resume|unknown",
+  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_notes|remember|preferences|research|set_timezone|set_quiet_hours|pause|resume|unknown",
   "confidence": 0.0-1.0,
   "target": {"instance_number": int|null, "task_query": string|null},
   "task": {"title": string|null, "notes": string|null, "rrule": string|null, "local_time": "HH:MM"|null,
@@ -310,6 +328,10 @@ Rules:
 10b. CONTEXT about an existing task — "the gym one is for my knee", "I need
    this because rent is due" — is intent "set_notes" with task_query and the
    context in task.notes. It is never a new task.
+10b2. Asking to LOOK SOMETHING UP for a task — "check the price", "find deals
+   on X", "tell me what's best" — is intent "research": task_query names the
+   task, task.notes carries what to search for. The app then checks the web
+   daily and shows what it finds on the nag.
 10c. A STANDING FACT about the user rather than about one task — "I use Ryse
    protein", "I shop at Costco", "my gym is on 5th" — is intent "remember"
    with the fact in "memory". These apply to everything; task.notes applies to
@@ -440,7 +462,7 @@ export function needsConfirmation(p: Parsed): boolean {
 
 const INTENTS: Intent[] = [
   "create", "update", "delete", "complete", "snooze", "skip", "list", "tasks",
-  "set_notes", "remember", "forget", "preferences", "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
+  "set_notes", "remember", "forget", "preferences", "research", "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
 ];
 
 function normalizeIntent(v: unknown): Intent {
