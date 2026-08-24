@@ -2,14 +2,16 @@
 /**
  * Live end-to-end test against PRODUCTION.
  *
- *   npm run e2e                  create → real cron tick → nag+hint verified → cleanup  (~90s)
- *   npm run e2e -- --interactive same, then waits for you to tap the buttons on your phone
+ *   npm run e2e                  one-off AND recurring reminder → real cron tick →
+ *                                nag + hint + ladder verified → cleanup  (~90s)
+ *   npm run e2e -- --interactive same, then waits for you to tap 🗑 Today on the
+ *                                recurring [TEST] nag to prove the button semantics
  *
  * What it proves, in order: the worker is up, the cron is actually ticking
  * (tick_log), a reminder created NOW is claimed and SENT on the next tick, the
  * AI hint was generated (and what it said — last_hint), and close-out works.
  *
- * It sends ONE real Telegram message to the owner's chat, prefixed [TEST], and
+ * It sends TWO real Telegram messages to the owner's chat, prefixed [TEST], and
  * deletes its rows afterwards. Needs wrangler auth (same as deploying); no
  * secrets. Exists because "change it, then wait until tomorrow's 9am nag to
  * find out" burned three days of iteration on hints alone.
@@ -22,6 +24,8 @@ const INTERACTIVE = process.argv.includes("--interactive");
 const BASE = "https://reminder-bot.dineshkan.workers.dev";
 const TASK_ID = `e2e_${Date.now()}`;
 const INST_ID = `e2ei_${randomUUID().slice(0, 8)}`;
+const RTASK_ID = `e2e_r${Date.now()}`;
+const RINST_ID = `e2ei_${randomUUID().slice(0, 8)}`;
 
 const results = [];
 let failed = false;
@@ -79,56 +83,100 @@ try {
   const [{ id: userId } = {}] = d1(`SELECT id FROM users LIMIT 1`);
   step("found owner", !!userId, userId ?? "no user row");
   d1(
-    `INSERT INTO tasks VALUES ('${TASK_ID}','${userId}','[TEST] badger e2e — tap nothing',` +
-      `'this is an automated test; the first step is to ignore it','FREQ=DAILY;COUNT=1',` +
+    `INSERT INTO tasks VALUES ('${TASK_ID}','${userId}','[TEST] water the office plants',` +
+      `'automated test — the watering can is under the kitchen sink','FREQ=DAILY;COUNT=1',` +
       `'${iso(now)}','12:00','America/Chicago','pol_urgent','supersede',1,'${iso(now)}','${iso(now)}')`,
   );
   d1(
     `INSERT INTO reminder_instances VALUES ('${INST_ID}','${TASK_ID}','${userId}',` +
       `'${iso(now)}','pending',0,0,'${iso(now - 30_000)}','${iso(now + 2 * 3600_000)}',NULL,NULL,NULL)`,
   );
-  step("test reminder created", true, "due now, urgent, with a note");
+  // A RECURRING sibling: same policy, FREQ=DAILY. What is different — and
+  // what this phase exists to prove — is the ladder: after the first nag a
+  // recurring chain must have its NEXT nag scheduled, where the one-off's
+  // machinery is identical up to that point.
+  d1(
+    `INSERT INTO tasks VALUES ('${RTASK_ID}','${userId}','[TEST] daily stretch',` +
+      `'automated test — the mat is rolled up behind the couch','FREQ=DAILY',` +
+      `'${iso(now - 86_400_000)}','12:00','America/Chicago','pol_urgent','supersede',1,'${iso(now)}','${iso(now)}')`,
+  );
+  d1(
+    `INSERT INTO reminder_instances VALUES ('${RINST_ID}','${RTASK_ID}','${userId}',` +
+      `'${iso(now)}','pending',0,0,'${iso(now - 30_000)}','${iso(now + 2 * 3600_000)}',NULL,NULL,NULL)`,
+  );
+  step("test reminders created", true, "a one-off and a daily, both due now, urgent, with notes");
 
   // 4. Wait for the real cron to claim and send it (≤ ~90s).
   console.log("  waiting for the next cron tick…");
-  let inst = null;
+  let inst = null, rinst = null;
   for (let i = 0; i < 10; i++) {
     await sleep(10_000);
     [inst] = d1(`SELECT state, attempt_count, next_nag_at, last_hint FROM reminder_instances WHERE id='${INST_ID}'`);
-    if (inst && inst.state === "notified" && inst.attempt_count >= 1) break;
+    [rinst] = d1(`SELECT state, attempt_count, next_nag_at, last_hint FROM reminder_instances WHERE id='${RINST_ID}'`);
+    if (inst?.state === "notified" && rinst?.state === "notified") break;
     process.stdout.write(".");
   }
   console.log("");
   step(
-    "nag was sent by the real tick",
+    "one-off nag sent by the real tick",
     !!inst && inst.state === "notified" && inst.attempt_count >= 1,
     inst ? `state=${inst.state} attempts=${inst.attempt_count}` : "instance vanished",
+  );
+  step(
+    "recurring nag sent by the real tick",
+    !!rinst && rinst.state === "notified" && rinst.attempt_count >= 1,
+    rinst ? `state=${rinst.state} attempts=${rinst.attempt_count}` : "instance vanished",
+  );
+
+  // The recurring chain's defining property: the ladder is ALIVE. pol_urgent
+  // is [5,5,10,15,30], so after nag one the next is scheduled ~5 minutes out.
+  // The one-off shares every step up to here; this is where they diverge.
+  const nextMin = rinst?.next_nag_at ? (Date.parse(rinst.next_nag_at) - Date.now()) / 60000 : null;
+  step(
+    "recurring ladder is live (next nag scheduled)",
+    nextMin !== null && nextMin > 0 && nextMin < 7,
+    nextMin !== null ? `next nag in ${nextMin.toFixed(1)}m` : "next_nag_at is NULL — chain dead after one nag",
   );
 
   // 5. The hint. Stored on the instance at send time, so the exact text the
   //    model produced is inspectable — and its absence is a finding, not a shrug.
-  if (inst?.last_hint) {
-    step("AI hint generated", true, `“${inst.last_hint}”`);
-  } else {
-    const [tick] = d1(`SELECT report, error FROM tick_log ORDER BY ran_at DESC LIMIT 1`);
-    step("AI hint generated", false,
-      `no hint on the nag — check: npx wrangler tail reminder-bot  (last tick: ${tick?.report ?? "?"} ${tick?.error ?? ""})`);
+  for (const [label, row] of [["one-off", inst], ["recurring", rinst]]) {
+    if (row?.last_hint) {
+      step(`AI hint on the ${label} nag`, true, `“${row.last_hint}”`);
+    } else {
+      const [tick] = d1(`SELECT report, error FROM tick_log ORDER BY ran_at DESC LIMIT 1`);
+      step(`AI hint on the ${label} nag`, false,
+        `absent — check: npx wrangler tail reminder-bot  (last tick: ${tick?.report ?? "?"} ${tick?.error ?? ""})`);
+    }
   }
 
   // 6. Close-out. Interactive mode proves the real buttons; otherwise the
   //    state machine is exercised directly.
   if (INTERACTIVE) {
-    console.log("\n  → On your phone: tap ✅ Done on the [TEST] message. Waiting up to 2 minutes…");
+    console.log("\n  → On your phone: tap ✅ Done on the [TEST] water-the-plants nag. Waiting up to 2 minutes…");
     let closed = null;
     for (let i = 0; i < 24; i++) {
       await sleep(5_000);
       [closed] = d1(`SELECT state, ack_source FROM reminder_instances WHERE id='${INST_ID}'`);
       if (closed && closed.state !== "notified") break;
     }
-    step("button tap closed it", !!closed && closed.state === "acknowledged",
+    step("Done closed the one-off", !!closed && closed.state === "acknowledged",
       closed ? `state=${closed.state} via ${closed.ack_source}` : "timed out");
     const [task] = d1(`SELECT active FROM tasks WHERE id='${TASK_ID}'`);
     step("one-off retired by Done", task?.active === 0, `active=${task?.active}`);
+
+    console.log("\n  → Now tap 🗑 Today on the [TEST] daily-stretch nag. Waiting up to 2 minutes…");
+    let rclosed = null;
+    for (let i = 0; i < 24; i++) {
+      await sleep(5_000);
+      [rclosed] = d1(`SELECT state FROM reminder_instances WHERE id='${RINST_ID}'`);
+      if (rclosed && rclosed.state !== "notified") break;
+    }
+    step("🗑 Today closed today's occurrence", !!rclosed && rclosed.state === "skipped",
+      rclosed ? `state=${rclosed.state}` : "timed out");
+    const [rtask] = d1(`SELECT active FROM tasks WHERE id='${RTASK_ID}'`);
+    step("…and the series SURVIVES", rtask?.active === 1,
+      `active=${rtask?.active} — Today must never delete the reminder itself`);
   } else {
     d1(`UPDATE reminder_instances SET state='acknowledged', next_nag_at=NULL WHERE id='${INST_ID}'`);
     const [closed] = d1(`SELECT state FROM reminder_instances WHERE id='${INST_ID}'`);

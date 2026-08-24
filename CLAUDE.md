@@ -9,7 +9,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
 - `npm run smoke` — the post-deploy checks without waiting for a tick
-- `npm run e2e` — LIVE test against production: creates a [TEST] reminder, waits for the real cron, verifies the nag was sent and what hint it carried (last_hint), cleans up. `-- --interactive` also waits for a real button tap. Sends one real Telegram message.
+- `npm run e2e` — LIVE test against production: creates a [TEST] one-off AND a [TEST] daily, waits for the real cron, verifies both nags, both hints (last_hint), and that the daily's ladder scheduled its next nag; cleans up. `-- --interactive` additionally proves ✅ Done retires the one-off and 🗑 Today closes the day WITHOUT killing the series. Sends two real Telegram messages. Test fixtures must not bait the restatement filter — a title like 'tap nothing' makes the model's obedient answer a droppable restatement.
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
 
 ## Architecture (src/)
