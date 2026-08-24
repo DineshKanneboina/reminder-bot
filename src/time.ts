@@ -38,8 +38,33 @@ function formatter(tz: string): Intl.DateTimeFormat {
   return f;
 }
 
+/**
+ * Memo for toLocalParts, keyed by (tz, minute). Intl.formatToParts costs real
+ * CPU (~0.1ms+ each), and the tick calls this thousands of times on instants
+ * that repeat across tasks and across ticks — the 48h materialize walk visits
+ * the same local-noon instants for every task, every minute. Uncached, an IDLE
+ * tick burned 22-27ms of CPU against the Workers free plan's 10ms allowance;
+ * busy ticks (nags + board + catch-up) went far past it and were killed
+ * mid-flight. That is what a weekend of "the bot is down" actually was.
+ *
+ * Minute granularity is exact, not approximate: every caller passes instants
+ * derived from wall-clock minutes. Cap + clear keeps the isolate's memory flat.
+ */
+const partsCache = new Map<string, LocalParts>();
+const PARTS_CACHE_MAX = 20_000;
+
 /** Break a UTC instant into wall-clock parts in the given zone. */
 export function toLocalParts(epochMs: number, tz: string): LocalParts {
+  const key = `${tz}|${Math.floor(epochMs / 60_000)}`;
+  const hit = partsCache.get(key);
+  if (hit) return hit;
+  const parts = computeLocalParts(epochMs, tz);
+  if (partsCache.size >= PARTS_CACHE_MAX) partsCache.clear();
+  partsCache.set(key, parts);
+  return parts;
+}
+
+function computeLocalParts(epochMs: number, tz: string): LocalParts {
   const parts = formatter(tz).formatToParts(new Date(epochMs));
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "0";
   let hour = parseInt(get("hour"), 10);

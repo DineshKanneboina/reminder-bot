@@ -100,11 +100,18 @@ The numbers are real — `done 1` works, and so do the buttons underneath.
 
 ## Answering
 
+Buttons depend on what kind of reminder is nagging. A **one-off** shows
+[✅ Done] [⏳ 1h] — Done finishes the task for good. A **recurring** reminder
+shows [⏳ 1h] [🗑 Today] [❌ Forever] — dismiss today, or delete the whole
+series. There is no Done button on a recurring nag; "done" on a daily kept
+reading as "handled forever", and it wasn't.
+
 | You say | It does |
 |---|---|
-| `done` · `done 2` | acknowledge, and get what's left of today back |
+| `done` · `done 2` | one-off: finishes and removes it · recurring: closes today |
+| `done with <name>` | works even before it nags; a name that matches nothing open never closes something else |
 | `snooze 30m` · `snooze 2 1h` | push it out, reset escalation, extend the give-up window |
-| `skip` | close it out without doing it |
+| `skip` | close today without doing it |
 
 Buttons do the same thing and are unambiguous — they carry the exact reminder,
 so there's nothing to resolve.
@@ -328,9 +335,10 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 108 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 115 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run check     # the deploy gate, minus the checks that need network
+npm run e2e       # live production test: create → real cron nag → hint → cleanup (~90s)
 npm run dev       # local worker + local D1
 ```
 

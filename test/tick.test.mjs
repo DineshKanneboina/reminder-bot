@@ -248,7 +248,7 @@ test("a carried-over item is dated in the list, not only on the board", async ()
   const lastNight = localToUtc(2026, 8, 11, 18, 0, TZ);
   d1.exec(`INSERT INTO reminder_instances VALUES
     ('i_last','t1','u1','${iso(lastNight)}','notified',2,1,
-     '${iso(morning + 3600_000)}','${iso(morning + 7200_000)}',NULL,NULL);`);
+     '${iso(morning + 3600_000)}','${iso(morning + 7200_000)}',NULL,NULL,NULL);`);
 
   const db = new Db(d1);
   const live = await db.liveForUser("u1", iso(morning));
@@ -277,16 +277,23 @@ test("bare 'done' refuses to guess when several chains are live", async () => {
 });
 
 test("button payloads resolve to an exact instance, never an index", async () => {
-  seedTask("09:00");
+  seedTask("09:00"); // recurring — buttons are [1h] [Today] [Forever]
   await runTick(env, T0);
   const db = new Db(d1);
   const live = await db.liveForUser("u1", iso(T0));
-  const payload = sent[0].markup.inline_keyboard.flat()[0].callback_data;
+  const buttons = sent[0].markup.inline_keyboard.flat();
 
-  const parsed = parseButton(payload);
-  assert.equal(parsed.intent, "complete");
-  assert.equal(parsed.target.instance_id, live[0].id);
-  assert.equal(parsed.source, "button");
+  const today = parseButton(buttons.find((b) => b.text.includes("Today")).callback_data);
+  assert.equal(today.intent, "skip");
+  assert.equal(today.target.instance_id, live[0].id);
+  assert.equal(today.source, "button");
+
+  // ❌ Forever deletes the series, and the tap itself is the confirmation.
+  const forever = parseButton(buttons.find((b) => b.text.includes("Forever")).callback_data);
+  assert.equal(forever.intent, "delete");
+  assert.equal(forever.target.instance_id, live[0].id);
+
+  assert.ok(!buttons.some((b) => b.text.includes("Done")), "no Done button on a recurring nag");
 });
 
 test("snooze pushes the chain out and resets escalation", async () => {
@@ -311,8 +318,8 @@ test("supersede collapses an older live chain when a newer one comes due", async
   // Two live chains 30 minutes apart, both already due.
   d1.exec(`
     INSERT INTO reminder_instances VALUES
-      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL),
-      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL);
+      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL),
+      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL);
   `);
 
   const r = await runTick(env, T0);
@@ -332,8 +339,8 @@ test("stack keeps both chains alive and nags for both", async () => {
   seedTask("09:00", { policy: "pol_long", overlap: "stack" });
   d1.exec(`
     INSERT INTO reminder_instances VALUES
-      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL),
-      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL);
+      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL),
+      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL);
   `);
 
   const r = await runTick(env, T0);

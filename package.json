@@ -13,7 +13,8 @@
     "predeploy": "node scripts/predeploy.mjs",
     "postdeploy": "node scripts/postdeploy.mjs",
     "check": "SKIP_REMOTE=1 node scripts/predeploy.mjs",
-    "smoke": "SKIP_WAIT=1 node scripts/postdeploy.mjs"
+    "smoke": "SKIP_WAIT=1 node scripts/postdeploy.mjs",
+    "e2e": "node scripts/e2e.mjs"
   },
   "keywords": [],
   "author": "",

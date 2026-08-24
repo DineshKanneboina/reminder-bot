@@ -4,11 +4,12 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 108 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 115 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
 - `npm run smoke` — the post-deploy checks without waiting for a tick
+- `npm run e2e` — LIVE test against production: creates a [TEST] reminder, waits for the real cron, verifies the nag was sent and what hint it carried (last_hint), cleans up. `-- --interactive` also waits for a real button tap. Sends one real Telegram message.
 - Schema changes additionally need: `npx wrangler d1 execute reminder-bot --remote --command "<DDL>"` applied BEFORE deploy. schema.sql is IF NOT EXISTS throughout.
 
 ## Architecture (src/)
@@ -27,6 +28,15 @@ Two loops over one D1 database:
 
 ## Invariants the tests pin (do not break)
 
+- A NAMED target that matches nothing live resolves to NOTHING. The single-live fallback is only for messages that named nothing — "Done with OMSCS" must never complete whatever else happens to be open.
+- Done on a one-off retires the TASK, every source. There is no tomorrow to keep it for.
+- A recurring nag has NO done button: [⏳ 1h] [🗑 Today] [❌ Forever] (owner's decision, 24 Aug). One-offs get [✅ Done] [⏳ 1h]. ❌ goes through intent delete with the instance id; the tap is the confirmation.
+- Typed destructive commands older than 10 minutes (msg.receivedAt) are refused with the current open list. Buttons are exempt: exact ids, state-guarded.
+- catchUp closes stale items in ONE statement BEFORE sending the digest. Send-then-close repeated the digest every revival when a tick died mid-loop.
+- Every tick writes a tick_log row — especially the ones that die. `npm run e2e` and the smoke check read it.
+- toLocalParts is memoized per (tz, minute). Uncached, an idle tick cost 22-27ms CPU against the free plan's 10ms and busy ticks were killed mid-flight — that was the weekend outage. Do not add per-tick Intl work outside it.
+- The board syncs on activity or every 5th minute, not every tick (CPU). The inbound path syncs directly and is unaffected.
+- A claimed-but-unhandled inbound message may be reprocessed by a provider retry after 2 minutes. Handled messages never are.
 - Terminal instance states always have next_nag_at NULL — that column IS the state machine; the scheduler queries nothing else.
 - Claiming uses a 2-minute lease, never NULL, so a crashed send self-retries.
 - The ladder is indexed by `escalation_step - 1`, because the claim already incremented it. Both ladders — timing and channel — must index the same way, or a policy disagrees with itself about which nag it is on.
@@ -37,7 +47,7 @@ Two loops over one D1 database:
 - Replayed provider message ids are no-ops.
 - Downtime produces one digest, not a nag flood.
 - Snooze extends give_up_at.
-- A send is never *held* by an LLM call. Hints run on the send path by design, but behind a 1200ms timeout and a per-tick budget, and any failure sends hintless. The inbound parser is still never on the send path at all.
+- A send is never *held* by an LLM call. Hints run on the send path by design, but behind a hard timeout (HINT_TIMEOUT_MS, default 3000) and a per-tick budget, and any failure sends hintless. The inbound parser is still never on the send path at all.
 - `TickReport.hinted` exists so a broken model is diagnosable: `sent` above zero with `hinted` stuck at zero is the signature, and hint failures log rather than vanish.
 - Hint output is untrusted: dropped if it contains markup or a link, escaped again at render, capped in length. A missing hint is invisible; a mangled one is worse than none.
 - Bare "done"/"yes" never guess: done with 2+ live chains asks which; yes only confirms when a pending_action actually exists, else falls to the LLM with dialog context.

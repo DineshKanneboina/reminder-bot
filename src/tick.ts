@@ -38,6 +38,25 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
     parked: 0, hinted: 0,
   };
 
+  // Every tick leaves a row, even — especially — the ones that die. A weekend
+  // of CPU-killed ticks was invisible after the fact because a dead tick left
+  // no trace anywhere.
+  let error: string | null = null;
+  try {
+    await tickPhases(env, db, report, now);
+  } catch (e) {
+    error = String(e);
+    console.error("tick failed", error);
+  }
+  await db.putTickLog(iso(now), error === null, report, error);
+  if (new Date(now).getUTCMinutes() === 0) {
+    await db.pruneTickLog(iso(now - 48 * 3600_000)).catch(() => {});
+  }
+  if (error === null) await heartbeat(env, report);
+  return report;
+}
+
+async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Promise<void> {
   const horizonH = Number(env.MATERIALIZE_HORIZON_HOURS ?? 48);
   const staleH = Number(env.STALE_FLOOR_HOURS ?? 2);
   const staleFloor = now - staleH * 3600_000;
@@ -159,7 +178,7 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
 
       report.sent += group.length;
       for (const inst of group) {
-        await db.setNextNag(inst.id, nextNagAt(inst, now));
+        await db.setNextNag(inst.id, nextNagAt(inst, now), inst.id === lead.id ? hint : null);
       }
     }
   }
@@ -167,10 +186,17 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
   // --- Phase E: reconcile the pinned daily board ---------------------------
   // Last, so it reflects everything the phases above just did. Never allowed to
   // throw: the board is a view, and a broken view must not fail the tick.
-  await syncBoards(env, db, now).catch((e) => console.error("board phase failed", e));
-
-  await heartbeat(env, report);
-  return report;
+  //
+  // Gated: a full board render costs real CPU (Intl-heavy), and on an idle
+  // tick nothing can have changed. Activity syncs immediately; otherwise every
+  // fifth minute catches pure time-passage changes (midnight rollover,
+  // upcoming items becoming due are activity anyway via the claim).
+  const activity =
+    report.sent + report.claimed + report.parked + report.expired +
+    report.superseded + report.caughtUp + report.materialized > 0;
+  if (activity || new Date(now).getUTCMinutes() % 5 === 0) {
+    await syncBoards(env, db, now).catch((e) => console.error("board phase failed", e));
+  }
 }
 
 /**
@@ -277,6 +303,13 @@ async function catchUp(env: Env, db: Db, staleFloor: number): Promise<number> {
   const stale = await db.stale(iso(staleFloor));
   if (stale.length === 0) return 0;
 
+  // Close FIRST, in one atomic statement, then tell the user. The old order —
+  // send the digest, then close row by row — meant a tick killed mid-loop had
+  // announced items it never closed, and every revival announced them again:
+  // the triple "I was offline" digest. Losing one digest to a crash is
+  // recoverable (the board still shows Missed); repeating it is spam.
+  await db.closeStale(stale.map((i) => i.id));
+
   const registry = buildChannels(env);
   for (const [userId, insts] of groupBy(stale, (i) => i.user_id)) {
     const channels = await db.channels(userId);
@@ -285,7 +318,6 @@ async function catchUp(env: Env, db: Db, staleFloor: number): Promise<number> {
       const { text } = renderCatchUp(insts);
       await dest.channel.send(dest.target, text).catch(() => {});
     }
-    for (const i of insts) await db.terminate(i.id, "expired", "auto");
   }
   return stale.length;
 }

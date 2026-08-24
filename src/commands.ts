@@ -194,6 +194,15 @@ export async function applyIntent(
     }
 
     case "delete": {
+      // The ❌ Forever button carries an instance id; everything else names
+      // the task. Both end at deactivateTask, which also retires live chains.
+      if (p.target.instance_id) {
+        const inst = await db.instance(p.target.instance_id);
+        if (!inst) return { text: "That one is already gone." };
+        const task = (await db.tasksForUser(user.id)).find((t) => t.id === inst.task_id);
+        await db.deactivateTask(inst.task_id);
+        return { text: `❌ Removed <b>${esc(task?.title ?? "that reminder")}</b> — today and every day after.` };
+      }
       const match = await resolveTask(db, user.id, p);
       if ("error" in match) return { text: match.error };
       await db.deactivateTask(match.task.id);
@@ -204,6 +213,21 @@ export async function applyIntent(
     case "skip": {
       const id = await resolveInstance(db, user.id, p, live);
       if (!id) {
+        // "Done with OMSCS" when OMSCS isn't open right now. The user still
+        // said something meaningful about a TASK: a one-off is finished for
+        // good, done means remove. A recurring series is a bigger decision, so
+        // it goes through the delete confirmation rather than being guessed at.
+        if (p.target.task_query) {
+          const found = await resolveTask(db, user.id, p);
+          if ("task" in found) {
+            if (isOneOff(found.task.rrule)) {
+              await db.deactivateTask(found.task.id);
+              return { text: `✅ Done — <b>${esc(found.task.title)}</b> removed.` };
+            }
+            return applyIntent({ ...p, intent: "delete" }, user, db, env, live, now);
+          }
+          return { text: found.error };
+        }
         return {
           text: live.length
             ? "Which one?\n" + renderLiveList(live, now).text
@@ -215,6 +239,12 @@ export async function applyIntent(
       const ok = await db.terminate(id, state, p.source);
       if (!ok) return { text: "That one was already closed out." };
       const inst = live.find((i) => i.id === id);
+      // Done on a one-off finishes the TASK, not just the occurrence — there
+      // is no tomorrow to keep it for, and retiring it here is what keeps
+      // completed one-offs out of the "Already happened" purgatory.
+      if (p.intent === "complete" && inst && isOneOff(inst.rrule)) {
+        await db.deactivateTask(inst.task_id);
+      }
       const verb = p.intent === "complete" ? "✅ Done" : "🚫 Skipped";
 
       // Re-read rather than filtering `live`: that snapshot was taken before
@@ -353,13 +383,19 @@ async function resolveInstance(
   live: LiveInstance[],
 ): Promise<string | null> {
   if (p.target.instance_id) return p.target.instance_id;
-  const n = p.target.instance_number;
-  if (n && live[n - 1]) return live[n - 1].id;
+
+  // A NAME outranks everything else, and a name that matches nothing resolves
+  // to nothing. The old order fell through to "whatever is open": "Done with
+  // OMSCS", processed while only Buy protein powder was live, completed the
+  // protein — the user named a task and the bot closed a different one. The
+  // single-live fallback below is only for messages that named nothing.
   if (p.target.task_query) {
     const q = p.target.task_query.toLowerCase();
     const hits = live.filter((i) => i.title.toLowerCase().includes(q));
-    if (hits.length === 1) return hits[0].id;
+    return hits.length === 1 ? hits[0].id : null;
   }
+  const n = p.target.instance_number;
+  if (n && live[n - 1]) return live[n - 1].id;
   if (live.length === 1) return live[0].id;
   return null;
 }

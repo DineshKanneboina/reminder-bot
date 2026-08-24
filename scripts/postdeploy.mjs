@@ -62,6 +62,18 @@ if (process.env.SKIP_WAIT !== "1") {
   console.log(" done\n");
 }
 
+// Direct evidence now, not inference: every tick writes a row, including the
+// ones that die. A weekend of CPU-killed ticks was invisible precisely because
+// a dead tick used to leave no trace.
+check("last tick completed cleanly", () => {
+  const [row] = d1(`SELECT ran_at, ok, error FROM tick_log ORDER BY ran_at DESC LIMIT 1`);
+  if (!row) return "no tick_log rows at all — has a tick run since this deploy?";
+  const ageMin = mins(row.ran_at);
+  if (ageMin > 3) return `last tick was ${ageMin.toFixed(1)} minutes ago — cron may be stuck (a redeploy re-registers it)`;
+  if (Number(row.ok) !== 1) return `last tick DIED: ${row.error}`;
+  return null;
+});
+
 // The scheduler's own liveness signal. If ticks stop, due work piles up behind
 // next_nag_at and nothing clears it — which is silent, because a bot with
 // nothing to say looks identical to a bot that has died.

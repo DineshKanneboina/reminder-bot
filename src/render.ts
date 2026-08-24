@@ -1,4 +1,4 @@
-import { describeRRule, oneOffOccurrence } from "./rrule";
+import { describeRRule, isOneOff, oneOffOccurrence } from "./rrule";
 import { clockLabel, formatClock, localDateString, localDayBounds, ms, toLocalParts } from "./time";
 import { LiveInstance, OutboundAction, TaskRow } from "./types";
 
@@ -106,11 +106,20 @@ export function renderNag(
   const text =
     `⏰ ${head}<b>${esc(inst.title)}</b>\n` +
     `<i>due ${clock(inst.scheduled_for, inst.timezone)}${nth}</i>${tip}`;
-  const actions: OutboundAction[] = [
-    { label: "✅ Done", payload: `done:${inst.id}:${index}` },
-    { label: "⏳ 1h", payload: `snooze:${inst.id}:${index}:60` },
-    { label: "🚫 Skip", payload: `skip:${inst.id}:${index}` },
-  ];
+  // A one-off has no tomorrow, so Done is unambiguous: it finishes the task
+  // for good. A recurring nag deliberately has NO done button — the owner's
+  // call, after "Done" on a daily read as "handled forever" and it wasn't:
+  // 🗑 dismisses today (tomorrow still comes), ❌ deletes the whole series.
+  const actions: OutboundAction[] = isOneOff(inst.rrule)
+    ? [
+        { label: "✅ Done", payload: `done:${inst.id}:${index}` },
+        { label: "⏳ 1h", payload: `snooze:${inst.id}:${index}:60` },
+      ]
+    : [
+        { label: "⏳ 1h", payload: `snooze:${inst.id}:${index}:60` },
+        { label: "🗑 Today", payload: `skip:${inst.id}:${index}` },
+        { label: "❌ Forever", payload: `remove:${inst.id}:${index}` },
+      ];
   return { text, actions };
 }
 

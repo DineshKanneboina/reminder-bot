@@ -247,9 +247,9 @@ test("a carried-over item is dated, so it cannot read as today", async () => {
 
   d1.exec(`
     INSERT INTO reminder_instances VALUES
-      ('i_old','t1','u1','${iso(threeNights)}','notified',3,4,NULL,'${iso(morning + HOUR)}',NULL,NULL),
-      ('i_last','t1','u1','${iso(lastNight)}','notified',11,4,NULL,'${iso(morning + HOUR)}',NULL,NULL),
-      ('i_tonight','t1','u1','${iso(tonight)}','pending',0,0,'${iso(tonight)}','${iso(tonight + 3 * HOUR)}',NULL,NULL);
+      ('i_old','t1','u1','${iso(threeNights)}','notified',3,4,NULL,'${iso(morning + HOUR)}',NULL,NULL,NULL),
+      ('i_last','t1','u1','${iso(lastNight)}','notified',11,4,NULL,'${iso(morning + HOUR)}',NULL,NULL,NULL),
+      ('i_tonight','t1','u1','${iso(tonight)}','pending',0,0,'${iso(tonight)}','${iso(tonight + 3 * HOUR)}',NULL,NULL,NULL);
   `);
 
   const db = new Db(d1);

@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS reminder_instances (
   give_up_at      TEXT NOT NULL,
   acknowledged_at TEXT,
   ack_source      TEXT,
+  -- The first-step hint that went out with this chain's first nag, kept for
+  -- the e2e suite today and the feedback loop later.
+  last_hint       TEXT,
   UNIQUE(task_id, scheduled_for)
 );
 -- Partial index: the hot path only ever scans live rows.
@@ -124,3 +127,14 @@ CREATE TABLE IF NOT EXISTS preferences (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_preferences_user ON preferences(user_id);
+
+-- One row per cron tick: the report it produced, or the error that killed it.
+-- Exists because a weekend of flapping was undiagnosable after the fact —
+-- wrangler tail only shows the present, and a tick that dies mid-flight
+-- otherwise leaves no trace at all. Pruned to ~2 days.
+CREATE TABLE IF NOT EXISTS tick_log (
+  ran_at TEXT PRIMARY KEY,
+  ok     INTEGER NOT NULL,
+  report TEXT NOT NULL,
+  error  TEXT
+);

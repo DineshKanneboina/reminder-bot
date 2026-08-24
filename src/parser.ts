@@ -83,6 +83,11 @@ export function parseButton(payload: string): Parsed | null {
       return blank("skip", "button", { target });
     case "snooze":
       return blank("snooze", "button", { target, snooze_minutes: parseDuration(arg) ?? 60 });
+    // The ❌ Forever button: delete the whole series. Carries the exact
+    // instance id like every button, and needsConfirmation exempts buttons —
+    // the tap IS the confirmation, per the owner's explicit choice.
+    case "remove":
+      return blank("delete", "button", { target });
     default:
       return null;
   }

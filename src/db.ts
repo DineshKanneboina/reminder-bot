@@ -507,10 +507,12 @@ export class Db {
       .run();
   }
 
-  async setNextNag(id: string, nextIso: string | null): Promise<void> {
+  async setNextNag(id: string, nextIso: string | null, hint?: string | null): Promise<void> {
     await this.d1
-      .prepare(`UPDATE reminder_instances SET next_nag_at = ?2 WHERE id = ?1`)
-      .bind(id, nextIso)
+      .prepare(
+        `UPDATE reminder_instances SET next_nag_at = ?2, last_hint = COALESCE(?3, last_hint) WHERE id = ?1`,
+      )
+      .bind(id, nextIso, hint ?? null)
       .run();
   }
 
@@ -550,24 +552,89 @@ export class Db {
     return (r.meta?.changes ?? 0) > 0;
   }
 
+  // ---- tick log ----------------------------------------------------------
+
+  /** Record what a tick did — or what killed it. Never throws into the tick. */
+  async putTickLog(ranAtIso: string, ok: boolean, report: unknown, error: string | null): Promise<void> {
+    try {
+      await this.d1
+        .prepare(`INSERT OR REPLACE INTO tick_log (ran_at, ok, report, error) VALUES (?1,?2,?3,?4)`)
+        .bind(ranAtIso, ok ? 1 : 0, JSON.stringify(report), error)
+        .run();
+    } catch (e) {
+      console.error("tick_log write failed", String(e));
+    }
+  }
+
+  async pruneTickLog(beforeIso: string): Promise<void> {
+    await this.d1.prepare(`DELETE FROM tick_log WHERE ran_at < ?1`).bind(beforeIso).run();
+  }
+
+  async recentTicks(limit = 10): Promise<{ ran_at: string; ok: number; report: string; error: string | null }[]> {
+    const r = await this.d1
+      .prepare(`SELECT * FROM tick_log ORDER BY ran_at DESC LIMIT ?1`)
+      .bind(limit)
+      .all<{ ran_at: string; ok: number; report: string; error: string | null }>();
+    return r.results ?? [];
+  }
+
+  /**
+   * Close a set of stale instances in ONE statement. Used by the catch-up:
+   * closing one-by-one meant a tick killed mid-loop had told the user about
+   * items it never closed, and the next revival told them again — the triple
+   * "I was offline" digest. One statement is atomic: either they all close
+   * before the digest is sent, or no digest goes out.
+   */
+  async closeStale(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const marks = ids.map((_, i) => `?${i + 2}`).join(",");
+    await this.d1
+      .prepare(
+        `UPDATE reminder_instances
+            SET state = 'expired', next_nag_at = NULL, acknowledged_at = ?1, ack_source = 'auto'
+          WHERE id IN (${marks}) AND state IN ('pending','notified')`,
+      )
+      .bind(iso(Date.now()), ...ids)
+      .run();
+  }
+
   // ---- inbound dedupe & confirmations ------------------------------------
 
-  /** Returns false if we've already seen this provider message id. */
-  async claimInbound(msg: {
-    providerMessageId: string;
-    channelKind: string;
-    senderId: string;
-    text: string;
-  }): Promise<boolean> {
+  /**
+   * Returns false if we've already seen AND handled this provider message id.
+   *
+   * A message that was claimed but never marked handled is a message the
+   * worker died on mid-flight. Its provider retries used to be swallowed by
+   * the dedupe, losing the message forever — the user's "Done with OMSCS" got
+   * no reply and no effect. After a 2-minute grace, a retry may take over.
+   */
+  async claimInbound(
+    msg: {
+      providerMessageId: string;
+      channelKind: string;
+      senderId: string;
+      text: string;
+    },
+    now: number = Date.now(),
+  ): Promise<boolean> {
     const r = await this.d1
       .prepare(
         `INSERT OR IGNORE INTO inbound_messages
            (provider_message_id, channel_kind, sender_id, body, received_at)
          VALUES (?1,?2,?3,?4,?5)`,
       )
-      .bind(msg.providerMessageId, msg.channelKind, msg.senderId, msg.text, iso(Date.now()))
+      .bind(msg.providerMessageId, msg.channelKind, msg.senderId, msg.text, iso(now))
       .run();
-    return (r.meta?.changes ?? 0) > 0;
+    if ((r.meta?.changes ?? 0) > 0) return true;
+
+    const takeover = await this.d1
+      .prepare(
+        `UPDATE inbound_messages SET received_at = ?2
+          WHERE provider_message_id = ?1 AND handled_at IS NULL AND received_at < ?3`,
+      )
+      .bind(msg.providerMessageId, iso(now), iso(now - 2 * 60_000))
+      .run();
+    return (takeover.meta?.changes ?? 0) > 0;
   }
 
   async markInboundHandled(providerMessageId: string): Promise<void> {

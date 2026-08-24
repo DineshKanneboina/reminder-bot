@@ -10,6 +10,7 @@ import { syncBoard } from "./board";
 import { applyIntent } from "./commands";
 import { Db } from "./db";
 import { parseButton, parseKeyword, parseWithLlm } from "./parser";
+import { renderLiveList } from "./render";
 import { runTick } from "./tick";
 import { Env, InboundMessage } from "./types";
 
@@ -160,6 +161,30 @@ async function handleInbound(msg: InboundMessage, env: Env, rawUpdate?: any): Pr
       },
       env,
     );
+  }
+
+  // A message that took a long time to reach us describes a world that no
+  // longer exists: "Done with OMSCS" sent at 8:30 and delivered at 9:44 (the
+  // worker died on the first attempt) was resolved against 9:44's open list.
+  // Buttons are exempt — they carry the exact instance id and terminate() is
+  // state-guarded, so a late tap is harmlessly idempotent.
+  const STALE_MS = 10 * 60_000;
+  const destructive = ["complete", "skip", "snooze", "delete"].includes(parsed.intent);
+  if (destructive && parsed.source !== "button" && now - msg.receivedAt > STALE_MS) {
+    const mins = Math.round((now - msg.receivedAt) / 60_000);
+    const list = renderLiveList(live, now);
+    const reply = {
+      text:
+        `⚠️ That message took ${mins} minutes to reach me, so I haven't acted on it — ` +
+        `things may have moved on. Here's what's open now:\n\n${list.text}`,
+      actions: list.actions,
+    };
+    await db.markInboundHandled(msg.providerMessageId);
+    await db.putDialog(user.id, msg.text, stripTags(reply.text));
+    const reg = buildChannels(env);
+    const dest = resolveTarget(msg.channelKind, await db.channels(user.id), reg);
+    if (dest) await dest.channel.send(dest.target, reply.text, reply.actions);
+    return;
   }
 
   const reply = await applyIntent(parsed, user, db, env, live, now);

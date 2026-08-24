@@ -203,15 +203,20 @@ test("a full round trip: create by text, get nagged, tap Done", async () => {
   const nag = sent.find((s) => s.kind === "telegram");
   assert.match(nag.text, /water plants/);
 
-  // Tap the Done button that came with it.
-  const payload = nag.markup.inline_keyboard.flat().find((b) => b.text.includes("Done")).callback_data;
+  // A recurring nag carries no Done button any more — 🗑 Today closes just
+  // today's occurrence, ❌ Forever would delete the series.
+  const buttons = nag.markup.inline_keyboard.flat();
+  assert.ok(!buttons.some((b) => b.text.includes("Done")), "no Done on a daily");
+  const payload = buttons.find((b) => b.text.includes("Today")).callback_data;
   sent.length = 0;
   await tap(payload);
 
   const rows = d1.q(`SELECT state, next_nag_at FROM reminder_instances ORDER BY scheduled_for`);
-  const closed = rows.find((x) => x.state === "acknowledged");
-  assert.ok(closed, "the tapped instance is acknowledged");
+  const closed = rows.find((x) => x.state === "skipped");
+  assert.ok(closed, "the tapped instance is closed for today");
   assert.equal(closed.next_nag_at, null);
+  const [task] = d1.q(`SELECT active FROM tasks`);
+  assert.equal(task.active, 1, "and the series survives");
 });
 
 test("low-confidence parses go through a confirm handshake", async () => {
