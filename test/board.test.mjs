@@ -40,6 +40,9 @@ beforeEach(() => {
     QUIET_AGING_HOURS: "4",
     BOARD_HOUR: "07:00",
   };
+  // The webhook now revives a stale scheduler; an empty tick_log reads as
+  // stale and would run a real-clock tick inside tests. Keep it fresh here.
+  d1.exec(`INSERT INTO tick_log VALUES ('${new Date().toISOString()}',1,'{}',NULL)`);
   sent = installFetchCapture();
   pending = [];
   ctx = { waitUntil: (p) => (pending.push(p), p), passThroughOnException() {} };

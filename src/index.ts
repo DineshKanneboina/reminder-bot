@@ -31,6 +31,14 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === "/health") {
+      // Any hit on /health doubles as a dead-man's switch for the scheduler.
+      // On 25 Aug the platform's cron silently stopped for 80+ minutes (ticks
+      // healthy, then simply no invocations — a known free-plan failure whose
+      // official fix is "redeploy"). Ticks are idempotent and lease-guarded,
+      // so reviving from an unauthenticated endpoint is safe: when cron is
+      // healthy this never fires, and when it is dead, any external uptime
+      // pinger becomes the backup scheduler.
+      ctx.waitUntil(reviveIfStale(env));
       return Response.json({ ok: true, at: new Date().toISOString() });
     }
 
@@ -79,6 +87,7 @@ export default {
       const msg = update ? parseTelegramUpdate(update) : null;
       if (!msg) return new Response("ok");
       ctx.waitUntil(handleInbound(msg, env, update));
+      ctx.waitUntil(reviveIfStale(env)); // texting the bot also revives a dead scheduler
       return new Response("ok"); // ack fast; Telegram retries on slow replies
     }
 
@@ -93,6 +102,19 @@ export default {
     return new Response("not found", { status: 404 });
   },
 };
+
+/** If no tick has run for 3+ minutes, run one now. No-op under a healthy cron. */
+async function reviveIfStale(env: Env): Promise<void> {
+  try {
+    const db = Db.from(env);
+    const [last] = await db.recentTicks(1);
+    if (last && Date.now() - Date.parse(last.ran_at) < 3 * 60_000) return;
+    console.warn("cron appears stale — reviving", { lastTick: last?.ran_at ?? "never" });
+    await runTick(env);
+  } catch (e) {
+    console.error("revive failed", String(e));
+  }
+}
 
 async function handleInbound(msg: InboundMessage, env: Env, rawUpdate?: any): Promise<void> {
   const db = Db.from(env);

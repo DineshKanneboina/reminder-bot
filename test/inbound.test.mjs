@@ -44,6 +44,10 @@ beforeEach(() => {
     // which would make `replies()` ambiguous here. It has its own file.
     BOARD_ENABLED: "0",
   };
+  // Webhook hits now revive a stale scheduler; an empty tick_log reads as
+  // "stale forever" and would run real ticks inside unrelated tests. Seed a
+  // fresh row so revive stays a no-op unless a test clears it deliberately.
+  d1.exec(`INSERT INTO tick_log VALUES ('${new Date().toISOString()}',1,'{}',NULL)`);
   sent = installFetchCapture();
   pending = [];
   ctx = {

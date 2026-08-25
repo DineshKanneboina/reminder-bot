@@ -29,6 +29,10 @@ beforeEach(() => {
   sent = installFetchCapture();
   pending = [];
   ctx = { waitUntil: (p) => (pending.push(p), p), passThroughOnException() {} };
+  // Webhook hits now revive a stale scheduler; an empty tick_log reads as
+  // "stale forever" and would run real ticks inside unrelated tests. Seed a
+  // fresh row so revive stays a no-op unless a test clears it deliberately.
+  d1.exec(`INSERT INTO tick_log VALUES ('${new Date().toISOString()}',1,'{}',NULL)`);
   d1.exec(`
     INSERT INTO users VALUES ('u1','${TZ}','pol_default',NULL,'2026-01-01T00:00:00Z');
     INSERT INTO channels VALUES ('c1','u1','telegram','9999',0,1);
@@ -119,7 +123,10 @@ test("a text command that arrives late is refused, not misapplied", async () => 
   seedTask("t_protein", "Buy protein powder", "FREQ=DAILY", "09:00");
   await runTick(env, localToUtc(2026, 8, 24, 9, 0, TZ));
 
-  // Telegram carries the send time; this message is 74 minutes old.
+  // handleInbound reads the REAL clock (it is the real-time entry point), so
+  // this test must not depend on how many materialized occurrences have come
+  // due by the wall-clock date the suite happens to run on. "done 1" pins the
+  // target by number; a bare "done" would ask "which one?" on a two-live day.
   const sentAt = Math.floor((T0 - 74 * 60_000) / 1000);
   await worker.fetch(
     new Request("https://bot.example.com/webhook/telegram", {
@@ -127,14 +134,15 @@ test("a text command that arrives late is refused, not misapplied", async () => 
       headers: { "x-telegram-bot-api-secret-token": SECRET, "content-type": "application/json" },
       body: JSON.stringify({
         update_id: 1,
-        message: { message_id: 1, chat: { id: "9999" }, text: "done", date: sentAt },
+        message: { message_id: 1, chat: { id: "9999" }, text: "done 1", date: sentAt },
       }),
     }),
     env, ctx,
   );
   await settle();
 
-  assert.equal(d1.q(`SELECT state FROM reminder_instances`)[0].state, "notified", "nothing was closed");
+  const states = d1.q(`SELECT state FROM reminder_instances ORDER BY scheduled_for`).map((r) => r.state);
+  assert.ok(!states.includes("acknowledged") && !states.includes("skipped"), "nothing was closed");
   const reply = sent.filter((s) => s.kind === "telegram").at(-1);
   assert.match(reply.text, /took \d+ minutes to reach me/);
   assert.match(reply.text, /Buy protein powder/, "and it shows what IS open");
@@ -164,6 +172,7 @@ test("catch-up closes items before announcing them, so a crash cannot repeat the
 // ------------------------------------------------------------------- tick_log
 
 test("every tick leaves a row, and a dying tick leaves its error", async () => {
+  d1.exec(`DELETE FROM tick_log`); // beforeEach seeds a freshness row; count from zero
   await runTick(env, T0);
   let rows = d1.q(`SELECT ok, error FROM tick_log`);
   assert.equal(rows.length, 1);
@@ -198,4 +207,22 @@ test("a message the worker died on can be reprocessed by a retry", async () => {
   // Once HANDLED, no retry ever reprocesses it.
   await db.markInboundHandled("m1");
   assert.equal(await db.claimInbound(msg, T0 + 10 * 60_000), false);
+});
+
+test("a /health hit revives a dead scheduler, and is a no-op under a live one", async () => {
+  // 25 Aug: the platform cron silently stopped for 80+ minutes while every
+  // tick that DID run was healthy. Any monitoring ping is now a backup
+  // scheduler: idempotent, lease-guarded, and inert when cron is fine.
+  seedTask("t1", "morning thing", "FREQ=DAILY", "09:00");
+  d1.exec(`DELETE FROM tick_log`); // simulate the dead scheduler
+  const hit = () =>
+    worker.fetch(new Request("https://bot.example.com/health"), env, ctx).then(settle);
+
+  // No tick has ever run -> revive runs one.
+  await hit();
+  assert.equal(d1.q(`SELECT COUNT(*) n FROM tick_log`)[0].n, 1, "revived from cold");
+
+  // Fresh tick_log -> the next hit does nothing.
+  await hit();
+  assert.equal(d1.q(`SELECT COUNT(*) n FROM tick_log`)[0].n, 1, "no-op while healthy");
 });
