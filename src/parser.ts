@@ -177,7 +177,15 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
   // "note for gym: knee has been bad, start with five minutes" — and a bare
   // "note: ..." right after creating something, which attaches to that task.
   // Deterministic: capturing context must never itself cost a model call.
-  if ((m = /^note\s+for\s+([^:,\-\n]+?)\s*[:,\-\n]\s*(\S[\s\S]*)$/i.exec(raw.trim()))) {
+  // A colon is the EXPLICIT separator and wins when present — titles never
+  // contain one, so "note for check-in flight: passport ready" splits at the
+  // colon even though the title has a dash. Only without a colon do comma,
+  // dash or newline end the title ("Note for book Thailand flight,\n\n…").
+  if (
+    (m =
+      /^note\s+for\s+([^:\n]+?)\s*:\s*(\S[\s\S]*)$/i.exec(raw.trim()) ??
+      /^note\s+for\s+([^:,\-\n]+?)\s*[,\-\n]\s*(\S[\s\S]*)$/i.exec(raw.trim()))
+  ) {
     return blank("set_notes", "keyword", {
       target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
       task: {
@@ -211,7 +219,11 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
   // "research protein powder: current price of Ryse on Amazon" — attach a
   // daily web lookup to a task. Deterministic, like every config-changing
   // command. The query rides in task.notes (documented convention).
-  if ((m = /^(?:research|look ?up)\s+(?:for\s+)?([^:,\-\n]+?)\s*[:,\-\n]\s*(\S[\s\S]*)$/i.exec(raw.trim()))) {
+  if (
+    (m =
+      /^(?:research|look ?up)\s+(?:for\s+)?([^:\n]+?)\s*:\s*(\S[\s\S]*)$/i.exec(raw.trim()) ??
+      /^(?:research|look ?up)\s+(?:for\s+)?([^:,\-\n]+?)\s*[,\-\n]\s*(\S[\s\S]*)$/i.exec(raw.trim()))
+  ) {
     return blank("research", "keyword", {
       target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
       task: {

@@ -337,7 +337,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 128 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 130 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run check     # the deploy gate, minus the checks that need network
 npm run e2e       # live production test: create → real cron nag → hint → cleanup (~90s)

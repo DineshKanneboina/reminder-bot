@@ -309,3 +309,62 @@ test("a handler crash replies with an apology instead of silence", async () => {
   const [row] = d1.q(`SELECT handled_at FROM inbound_messages WHERE provider_message_id LIKE '%:77'`);
   assert.ok(row.handled_at, "and the message is marked handled, not stranded");
 });
+
+test("note separators: colon wins, then comma/dash/newline — titles with dashes survive", async () => {
+  const { parseKeyword } = await import("../build/parser.js");
+  const cases = [
+    // [message, expected task_query, note must contain]
+    ["note for gym: knee is bad", "gym", "knee is bad"],
+    ["note for gym - knee is bad", "gym", "knee is bad"],
+    ["note for gym, knee is bad", "gym", "knee is bad"],
+    ["Note for gym\nknee is bad", "gym", "knee is bad"],
+    // A dash in the TITLE: the explicit colon must win over the dash, or a
+    // task named "check-in flight" can never take a note at all.
+    ["note for check-in flight: passport ready", "check-in flight", "passport ready"],
+    // A dash in the NOTE with a colon separator stays intact.
+    ["note for flight: Nov 13-30 window, $1050", "flight", "Nov 13-30"],
+  ];
+  for (const [msg, task, note] of cases) {
+    const p = parseKeyword(msg, []);
+    assert.equal(p?.intent, "set_notes", msg);
+    assert.equal(p.target.task_query, task, msg);
+    assert.ok(p.task.notes.includes(note), `${msg} -> ${p.task.notes}`);
+  }
+  // research follows the same rule
+  const r = parseKeyword("research check-in flight: monsoon outlook koh samui", []);
+  assert.equal(r.intent, "research");
+  assert.equal(r.target.task_query, "check-in flight");
+
+  // Phrases the keyword layer can't place fall through to the model (which
+  // now knows show_notes) — they must NOT be swallowed by the help catch-all.
+  assert.equal(parseKeyword("Ar you able to list out notes for each task", []), null);
+});
+
+test("the batch message explains itself with its own numbers", async () => {
+  // The real 6:10pm message: numbered 3-7 with examples saying "done 1" about
+  // reminders that were not even in it, and buttons stopping at the 4th item.
+  const { renderBatch } = await import("../build/render.js");
+  const inst = (id, title) => ({
+    id, title, scheduled_for: iso(T0), timezone: TZ, attempt_count: 1,
+    rrule: "FREQ=DAILY",
+  });
+  const batch = [
+    inst("i3", "organize bedroom"), inst("i4", "book Thailand flight"),
+    inst("i5", "reorganize Pokemon card binder"), inst("i6", "study for the AWS exam"),
+    inst("i7", "plan out Thailand with santosh"),
+  ];
+  const { text, actions } = renderBatch(batch, 3); // items 1-2 open elsewhere
+
+  assert.match(text, /5 due at once/);
+  assert.match(text, /3\. <b>organize bedroom<\/b>/);
+  assert.match(text, /7\. <b>plan out Thailand with santosh<\/b>/);
+  // Examples use the batch's own first number, never a generic 1.
+  assert.match(text, /done 3<\/code>/);
+  assert.match(text, /snooze 3 30m/);
+  assert.doesNotMatch(text, /done 1</);
+  // It says what ✅ does, since one-offs and dailies differ.
+  assert.match(text, /one-off for good, a daily just for today/);
+  // Every item gets its button, numbered to match the list.
+  assert.deepEqual(actions.map((a) => a.label), ["✅ 3", "✅ 4", "✅ 5", "✅ 6", "✅ 7"]);
+  assert.equal(actions[4].payload, "done:i7:7");
+});

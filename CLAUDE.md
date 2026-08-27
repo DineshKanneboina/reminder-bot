@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 128 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 130 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
