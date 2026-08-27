@@ -10,7 +10,7 @@ import { LiveInstance } from "./types";
 
 export type Intent =
   | "create" | "update" | "delete" | "complete" | "snooze" | "skip"
-  | "list" | "tasks" | "set_notes" | "remember" | "forget" | "preferences" | "research"
+  | "list" | "tasks" | "set_notes" | "show_notes" | "remember" | "forget" | "preferences" | "research"
   | "set_timezone" | "set_quiet_hours"
   | "pause" | "resume" | "confirm" | "help" | "unknown";
 
@@ -177,13 +177,18 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
   // "note for gym: knee has been bad, start with five minutes" — and a bare
   // "note: ..." right after creating something, which attaches to that task.
   // Deterministic: capturing context must never itself cost a model call.
-  if ((m = /^note\s+for\s+(.+?)\s*[:\-]\s*(.+)$/is.exec(raw.trim()))) {
+  if ((m = /^note\s+for\s+([^:,\-\n]+?)\s*[:,\-\n]\s*(\S[\s\S]*)$/i.exec(raw.trim()))) {
     return blank("set_notes", "keyword", {
       target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
       task: {
         title: null, notes: m[2].trim(), rrule: null, local_time: null,
         start_date: null, policy: null, overlap: null,
       },
+    });
+  }
+  if ((m = /^notes?(?:\s+for\s+([^:,\-\n]+))?$/i.exec(text))) {
+    return blank("show_notes", "keyword", {
+      target: { instance_number: null, instance_id: null, task_query: m[1]?.trim() ?? null },
     });
   }
   if ((m = /^note\s*[:\-]\s*(.+)$/is.exec(raw.trim()))) {
@@ -206,7 +211,7 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
   // "research protein powder: current price of Ryse on Amazon" — attach a
   // daily web lookup to a task. Deterministic, like every config-changing
   // command. The query rides in task.notes (documented convention).
-  if ((m = /^(?:research|look ?up)\s+(?:for\s+)?(.+?)\s*[:\-]\s*(.+)$/is.exec(raw.trim()))) {
+  if ((m = /^(?:research|look ?up)\s+(?:for\s+)?([^:,\-\n]+?)\s*[:,\-\n]\s*(\S[\s\S]*)$/i.exec(raw.trim()))) {
     return blank("research", "keyword", {
       target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
       task: {
@@ -258,7 +263,7 @@ Reply with ONE JSON object and nothing else. No prose, no markdown fences.
 
 Schema:
 {
-  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_notes|remember|preferences|research|set_timezone|set_quiet_hours|pause|resume|unknown",
+  "intent": "create|update|delete|complete|snooze|skip|list|tasks|help|set_notes|show_notes|remember|preferences|research|set_timezone|set_quiet_hours|pause|resume|unknown",
   "confidence": 0.0-1.0,
   "target": {"instance_number": int|null, "task_query": string|null},
   "task": {"title": string|null, "notes": string|null, "rrule": string|null, "local_time": "HH:MM"|null,
@@ -328,6 +333,8 @@ Rules:
 10b. CONTEXT about an existing task — "the gym one is for my knee", "I need
    this because rent is due" — is intent "set_notes" with task_query and the
    context in task.notes. It is never a new task.
+10a2. Asking to SEE notes — "list my notes", "what's the note on gym" — is
+   intent "show_notes" (task_query optional). Never help.
 10b2. Asking to LOOK SOMETHING UP for a task — "check the price", "find deals
    on X", "tell me what's best" — is intent "research": task_query names the
    task, task.notes carries what to search for. The app then checks the web
@@ -462,7 +469,7 @@ export function needsConfirmation(p: Parsed): boolean {
 
 const INTENTS: Intent[] = [
   "create", "update", "delete", "complete", "snooze", "skip", "list", "tasks",
-  "set_notes", "remember", "forget", "preferences", "research", "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
+  "set_notes", "show_notes", "remember", "forget", "preferences", "research", "set_timezone", "set_quiet_hours", "pause", "resume", "confirm", "help", "unknown",
 ];
 
 function normalizeIntent(v: unknown): Intent {

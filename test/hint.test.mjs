@@ -189,7 +189,7 @@ test("a batched message gets no hint", async () => {
 
   await runTick(env, T0);
   assert.equal(nags().length, 1);
-  assert.match(nags()[0], /5 open/);
+  assert.match(nags()[0], /5 due at once/);
   assert.equal(env.AI.calls.length, 0);
   assert.doesNotMatch(nags()[0], /💡/);
 });

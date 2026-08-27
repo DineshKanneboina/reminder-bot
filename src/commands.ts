@@ -323,6 +323,28 @@ export async function applyIntent(
     case "preferences":
       return { text: renderPreferences(await db.preferences(user.id)) };
 
+    case "show_notes": {
+      if (p.target.task_query) {
+        const found = await resolveTask(db, user.id, p);
+        if ("error" in found) return { text: found.error };
+        const enr = await db.enrichmentFor(found.task.id);
+        return { text: renderNoteCard(found.task, enr) };
+      }
+      const tasks = await db.tasksForUser(user.id);
+      const cards: string[] = [];
+      let bare = 0;
+      for (const t of tasks) {
+        const enr = await db.enrichmentFor(t.id);
+        if (t.notes || enr) cards.push(renderNoteCard(t, enr));
+        else bare++;
+      }
+      if (cards.length === 0) {
+        return { text: "No notes yet. Say <code>note for gym: why it matters</code> to add one." };
+      }
+      const tail = bare > 0 ? `\n\n<i>…and ${bare} reminder${bare === 1 ? "" : "s"} without notes.</i>` : "";
+      return { text: `<b>Your notes</b>\n\n${cards.join("\n\n")}${tail}` };
+    }
+
     case "research": {
       const found = await resolveTask(db, user.id, p);
       if ("error" in found) return { text: found.error };
@@ -481,6 +503,26 @@ function anchorFor(
   return ms(task.dtstart);
 }
 
+/** One task's note + research, for the `notes` view. */
+function renderNoteCard(
+  task: TaskRow,
+  enr: { query: string; result: string | null; fetched_at: string | null } | null,
+): string {
+  const lines = [`📝 <b>${esc(task.title)}</b>`];
+  lines.push(
+    task.notes
+      ? esc(task.notes)
+      : `<i>(no note — say</i> <code>note for ${esc(task.title)}: …</code><i>)</i>`,
+  );
+  if (enr) {
+    lines.push(
+      `🔎 <i>${esc(enr.query)}</i>` +
+        (enr.result ? `\n→ ${esc(enr.result)}` : " <i>(first check pending)</i>"),
+    );
+  }
+  return lines.join("\n");
+}
+
 function validClock(v: string | null): string | null {
   if (!v) return null;
   try {
@@ -548,6 +590,7 @@ start nagging if you leave them there.
 • <code>pause 2h</code> / <code>resume</code>
 • <code>set timezone to Asia/Tokyo</code>
 • <code>note for gym: knee is bad, start with 5 min</code> — better nudges
+• <code>notes</code> / <code>notes for gym</code> — see what I know per reminder
 • <code>remember: I use Ryse protein</code> — things that apply to everything
 • <code>research protein: best current price for Ryse</code> — daily web check, shown on the nag
 • <code>preferences</code> / <code>forget 2</code>

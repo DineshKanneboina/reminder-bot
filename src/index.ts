@@ -209,7 +209,21 @@ async function handleInbound(msg: InboundMessage, env: Env, rawUpdate?: any): Pr
     return;
   }
 
-  const reply = await applyIntent(parsed, user, db, env, live, now);
+  // A crash past this point used to be perfectly silent: no reply, handled_at
+  // never set, and the dedupe swallowing provider retries. Four attempts to
+  // attach one note died that way on 26 Aug with nothing to show for it.
+  // Whatever throws now costs an apology and a log line, never silence.
+  let reply;
+  try {
+    reply = await applyIntent(parsed, user, db, env, live, now);
+  } catch (e) {
+    console.error("applyIntent crashed", { intent: parsed.intent, error: String(e) });
+    reply = {
+      text:
+        "⚠️ Something broke while I was handling that — it's logged. " +
+        "Try rephrasing, or <code>help</code> for the shapes I know.",
+    };
+  }
   await db.markInboundHandled(msg.providerMessageId);
   // Remember this exchange so the next message can say "that" and be understood.
   await db.putDialog(user.id, msg.text, stripTags(reply.text));

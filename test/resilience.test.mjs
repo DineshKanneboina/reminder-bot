@@ -226,3 +226,86 @@ test("a /health hit revives a dead scheduler, and is a no-op under a live one", 
   await hit();
   assert.equal(d1.q(`SELECT COUNT(*) n FROM tick_log`)[0].n, 1, "no-op while healthy");
 });
+
+// ------------------------------------------- the silent flight-note regression
+
+test("a note with a comma, newlines and dashes attaches to the right task", async () => {
+  // The real message of 26 Aug: "Note for book Thailand flight,\n\nFlights
+  // round trip from Nov 13-30 are $1050…". The old separator scan split at
+  // the dash inside "13-30" and hunted for a task named half the sentence.
+  seedTask("t_flight", "book Thailand flight", "FREQ=DAILY", "17:00");
+  const db = new Db(d1);
+  const user = await db.user("u1");
+  const { parseKeyword } = await import("../build/parser.js");
+
+  const TEXT =
+    "Note for book Thailand flight,\n\nFlights round trip from Nov 13-30 are $1050 " +
+    "from dfw to bkk, but the main thing holding from booking is the monsoon season threat";
+  const p = parseKeyword(TEXT, []);
+  assert.equal(p.intent, "set_notes");
+  assert.equal(p.target.task_query, "book Thailand flight");
+  assert.match(p.task.notes, /^Flights round trip from Nov 13-30/);
+  assert.match(p.task.notes, /monsoon season/);
+
+  const reply = await applyIntent(p, user, db, env, [], T0);
+  assert.match(reply.text, /Noted on <b>book Thailand flight<\/b>/);
+  assert.match(d1.q(`SELECT notes FROM tasks WHERE id='t_flight'`)[0].notes, /\$1050/);
+});
+
+test("notes and 'notes for X' show what each reminder knows", async () => {
+  seedTask("t_flight", "book Thailand flight", "FREQ=DAILY", "17:00");
+  seedTask("t_gym", "gym", "FREQ=DAILY", "06:00");
+  const db = new Db(d1);
+  const user = await db.user("u1");
+  const { parseKeyword } = await import("../build/parser.js");
+
+  await applyIntent(parseKeyword("note for book Thailand flight: $1050 dfw to bkk", []), user, db, env, [], T0);
+  await db.putEnrichmentConfig("t_flight", "monsoon forecast for koh islands mid November", iso(T0));
+
+  const all = await applyIntent(parseKeyword("notes", []), user, db, env, [], T0);
+  assert.match(all.text, /<b>Your notes<\/b>/);
+  assert.match(all.text, /book Thailand flight/);
+  assert.match(all.text, /\$1050 dfw to bkk/);
+  assert.match(all.text, /monsoon forecast/);
+  assert.match(all.text, /first check pending/);
+  assert.match(all.text, /1 reminder without notes/);
+
+  const one = await applyIntent(parseKeyword("notes for gym", []), user, db, env, [], T0);
+  assert.match(one.text, /<b>gym<\/b>/);
+  assert.match(one.text, /no note/);
+
+  // And crucially: "note for gym: x" still SETS rather than views.
+  assert.equal(parseKeyword("note for gym: knee is bad", []).intent, "set_notes");
+  assert.equal(parseKeyword("notes", []).intent, "show_notes");
+  assert.equal(parseKeyword("note for gym", []).intent, "show_notes");
+});
+
+test("a handler crash replies with an apology instead of silence", async () => {
+  // Four note attempts died silently in production on 26 Aug: no reply, no
+  // handled_at, retries eaten by the dedupe. Whatever throws must now be
+  // visible to the person who triggered it.
+  seedTask("t_flight", "book Thailand flight", "FREQ=DAILY", "17:00");
+  const { Db: DbClass } = await import("../build/db.js");
+  const orig = DbClass.prototype.findTasks;
+  DbClass.prototype.findTasks = async () => { throw new Error("boom in resolveTask"); };
+  try {
+    await worker.fetch(
+      new Request("https://bot.example.com/webhook/telegram", {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": SECRET, "content-type": "application/json" },
+        body: JSON.stringify({
+          update_id: 77,
+          message: { message_id: 77, chat: { id: "9999" }, text: "note for flight: hello", date: Math.floor(Date.now() / 1000) },
+        }),
+      }),
+      env, ctx,
+    );
+    await settle();
+  } finally {
+    DbClass.prototype.findTasks = orig;
+  }
+  const reply = sent.filter((s) => s.kind === "telegram").at(-1);
+  assert.match(reply.text, /Something broke/, "the crash produced a reply");
+  const [row] = d1.q(`SELECT handled_at FROM inbound_messages WHERE provider_message_id LIKE '%:77'`);
+  assert.ok(row.handled_at, "and the message is marked handled, not stranded");
+});

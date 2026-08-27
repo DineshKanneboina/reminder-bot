@@ -453,7 +453,7 @@ test("over max_concurrent, nags are consolidated into one message", async () => 
 
   const messages = sent.filter((s) => s.kind === "telegram");
   assert.equal(messages.length, 1, "6 chains > max_concurrent 4 -> one batched message");
-  assert.match(messages[0].text, /6 open/);
+  assert.match(messages[0].text, /6 due at once/);
   for (let i = 1; i <= 6; i++) assert.match(messages[0].text, new RegExp(`task ${i}`));
 });
 

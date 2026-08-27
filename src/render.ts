@@ -129,17 +129,26 @@ export function renderNag(
   return { text, actions };
 }
 
-/** One message covering several live chains, used when over max_concurrent. */
+/**
+ * One message covering several live chains, used when over max_concurrent.
+ *
+ * The numbers are each reminder's position in the OPEN list — they can start
+ * above 1 when other things are open — and the instructions use the batch's
+ * own first number: generic "done 1" examples once pointed at reminders that
+ * were not even in the message. Every item gets its button.
+ */
 export function renderBatch(insts: LiveInstance[], startIndex: number) {
   const lines = insts.map(
     (i, k) =>
       `${startIndex + k}. <b>${esc(i.title)}</b> — due ${clock(i.scheduled_for, i.timezone)}`,
   );
+  const n = startIndex;
   const text =
-    `⏰ <b>${insts.length} open</b>\n${lines.join("\n")}\n\n` +
-    `<i>Reply <code>done 1</code>, <code>snooze 2 30m</code>, or <code>skip 3</code>.</i>`;
+    `⏰ <b>${insts.length} due at once</b>\n${lines.join("\n")}\n\n` +
+    `<i>✅ closes one out (a one-off for good, a daily just for today).\n` +
+    `Or reply <code>done ${n}</code>, <code>snooze ${n} 30m</code>, <code>skip ${n}</code> — numbers match the list.</i>`;
   const actions: OutboundAction[] = insts
-    .slice(0, 4)
+    .slice(0, 8)
     .map((i, k) => ({ label: `✅ ${startIndex + k}`, payload: `done:${i.id}:${startIndex + k}` }));
   return { text, actions };
 }
