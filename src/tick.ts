@@ -135,13 +135,6 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
     for (const group of groups) {
       const lead = group[0];
       const startIdx = indexOf.get(lead.id) ?? 1;
-      // Every single nag gets a hint (owner's decision, 24 Aug, reversing
-      // once-per-chain): the prompt carries attempt_count, so later nudges
-      // can escalate rather than repeat. Batched messages still get none —
-      // one suggestion for six reminders is worse than silence. The per-tick
-      // budget is the cost ceiling, and a nag over budget goes hintless,
-      // which is already the designed failure mode.
-      let hint: string | null = null;
       let research: { text: string; label: string } | null = null;
       if (group.length === 1) {
         // Cached research, never a live lookup: phase F refreshes after all
@@ -155,22 +148,18 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
           };
         }
       }
-      if (group.length === 1 && hintBudget > 0) {
-        hintBudget--;
-        hint = await firstStepHint(env, {
-          title: lead.title,
-          notes: lead.notes,
-          attempt_count: lead.attempt_count,
-          preferences: facts,
-          research: research?.text ?? null,
-        });
-        if (hint) report.hinted++;
-      }
-
+      // The nag goes out FIRST, plain, and the hint is EDITED IN after. It
+      // used to be generated inline before the send, which put a 3-second AI
+      // wait squarely between the claim and the delivery — and when the
+      // platform killed invocations mid-flight (Sunday 30 Aug), that window
+      // ate every kill: 34 claims on one reminder, zero messages delivered,
+      // the ladder burned to give-up in silence. Now the exposed claim→send
+      // stretch is milliseconds, and a kill during the hint wait costs only
+      // the hint — always the acceptable loss.
       const { text, actions } =
         group.length > 1
           ? renderBatch(group, startIdx)
-          : renderNag(lead, startIdx, live.length, hint, research);
+          : renderNag(lead, startIdx, live.length, null, research);
 
       const step = Math.max(0, lead.escalation_step - 1);
       const ladder = safeJson<string[]>(lead.channel_ladder, ["primary"]);
@@ -195,8 +184,35 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
       }
 
       report.sent += group.length;
+      // Backoff is written before anything slow happens: a kill from here on
+      // cannot re-claim an already-delivered nag into a duplicate.
       for (const inst of group) {
-        await db.setNextNag(inst.id, nextNagAt(inst, now), inst.id === lead.id ? hint : null);
+        await db.setNextNag(inst.id, nextNagAt(inst, now));
+      }
+
+      // Now the enhancement pass. Single nags only (a batch is already a
+      // list), budget permitting, and only on channels that can edit.
+      if (group.length === 1 && hintBudget > 0 && res.providerMessageId && dest.channel.edit) {
+        hintBudget--;
+        const hint = await firstStepHint(env, {
+          title: lead.title,
+          notes: lead.notes,
+          attempt_count: lead.attempt_count,
+          preferences: facts,
+          research: research?.text ?? null,
+        });
+        if (hint) {
+          const withHint = renderNag(lead, startIdx, live.length, hint, research);
+          const edited = await dest.channel
+            .edit(dest.target, res.providerMessageId, withHint.text, withHint.actions)
+            .catch((e) => ({ ok: false as const, error: String(e) }));
+          if (edited.ok) {
+            report.hinted++;
+            await db.setLastHint(lead.id, hint);
+          } else {
+            console.error("hint edit failed", { error: edited.error });
+          }
+        }
       }
     }
   }

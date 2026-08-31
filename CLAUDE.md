@@ -48,7 +48,7 @@ Two loops over one D1 database:
 - Replayed provider message ids are no-ops.
 - Downtime produces one digest, not a nag flood.
 - Snooze extends give_up_at.
-- A send is never *held* by an LLM call. Hints run on the send path by design, but behind a hard timeout (HINT_TIMEOUT_MS, default 3000) and a per-tick budget, and any failure sends hintless. The inbound parser is still never on the send path at all.
+- A send is never *held* by an LLM call — structurally, not just by timeout: the nag is delivered PLAIN first, then the hint is generated and EDITED into the message (send-then-enhance, 31 Aug). The claim→send window is milliseconds; a platform kill during the model wait costs the hint, never the notification. Sunday 30 Aug proved why: 34 claims died inside the old inline 3s hint wait, zero nags delivered, the ladder burned to give-up in silence.
 - `TickReport.hinted` exists so a broken model is diagnosable: `sent` above zero with `hinted` stuck at zero is the signature, and hint failures log rather than vanish.
 - Hint output is untrusted: dropped if it contains markup or a link, escaped again at render, capped in length. A missing hint is invisible; a mangled one is worse than none.
 - Bare "done"/"yes" never guess: done with 2+ live chains asks which; yes only confirms when a pending_action actually exists, else falls to the LLM with dialog context.

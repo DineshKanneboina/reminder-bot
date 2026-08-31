@@ -84,8 +84,12 @@ export function renderRemaining(open: LiveInstance[], later: LiveInstance[], now
 
 const LATER_SHOWN = 5;
 
-const ordinal = (n: number): string =>
-  n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
+const ordinal = (n: number): string => {
+  // 21st, 32nd, 53rd — not "53th". Teens stay "th".
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+};
 
 /**
  * A single nag. `index` is the 1-based position in the user's live list, which

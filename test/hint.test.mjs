@@ -62,7 +62,10 @@ function seedTask(opts = {}) {
   `);
 }
 
-const nags = () => sent.filter((s) => s.kind === "telegram").map((s) => s.text);
+const nags = () => sent.filter((s) => s.kind === "telegram" && s.method === "sendMessage").map((s) => s.text);
+/** Hints arrive by EDIT after the nag is already delivered — the send path
+ *  never waits on the model. These are the enhancement passes. */
+const hintEdits = () => sent.filter((s) => s.kind === "telegram" && s.method === "editMessageText").map((s) => s.text);
 /** The per-task half of the prompt. The system half mentions "About them" in
  *  its rules, so asserting against the whole payload matches spuriously. */
 const askedAbout = (call) => call.inputs.messages.at(-1).content;
@@ -100,8 +103,11 @@ test("a hint reaches the nag when the model behaves", async () => {
   const r = await runTick(env, T0);
   assert.equal(r.sent, 1);
   assert.equal(r.hinted, 1, "and the tick reports it, so a broken model is visible");
-  assert.match(nags()[0], /Put the brackets by the wall\./);
-  assert.match(nags()[0], /💡/);
+  // The nag itself goes out PLAIN and instantly; the hint is edited in after.
+  // A platform kill during the model wait now costs the hint, never the nag.
+  assert.doesNotMatch(nags()[0], /💡/, "delivery never waits for the model");
+  assert.match(hintEdits()[0], /Put the brackets by the wall\./);
+  assert.match(hintEdits()[0], /💡/);
 
   // The task's notes are what make the hint specific, so they must be sent.
   const [call] = env.AI.calls;
@@ -178,7 +184,8 @@ test("hints are budgeted per tick so a busy tick still sends promptly", async ()
   const r = await runTick(env, T0);
   assert.equal(r.sent, 4, "all four nags went out");
   assert.equal(env.AI.calls.length, 2, "but only two hints were generated");
-  assert.equal(nags().filter((t) => /💡/.test(t)).length, 2);
+  assert.equal(hintEdits().length, 2, "two nags were enhanced after delivery");
+  assert.equal(nags().filter((t) => /💡/.test(t)).length, 0, "none inline");
 });
 
 test("a batched message gets no hint", async () => {
@@ -311,7 +318,7 @@ test("standing facts reach the hint prompt", async () => {
   assert.match(prompt, /About them/);
   assert.match(prompt, /- I use Ryse protein/);
   assert.match(prompt, /- I shop at Costco/);
-  assert.match(nags()[0], /Check if Ryse is in stock/);
+  assert.match(hintEdits()[0], /Check if Ryse is in stock/);
 });
 
 test("no facts means the prompt is exactly what it was", async () => {
@@ -366,7 +373,9 @@ test("every nudge carries a hint, and the model knows which nudge it is", async 
 
   assert.equal(nags().length, 3);
   assert.equal(env.AI.calls.length, 3, "one generation per notification");
-  for (const n of nags()) assert.match(n, /💡/);
+  assert.equal(hintEdits().length, 3, "each nag got its hint edited in");
+  for (const n of nags()) assert.doesNotMatch(n, /💡/, "never inline, never blocking");
+  for (const e of hintEdits()) assert.match(e, /💡/);
   // Later nudges tell the model how long this has been ignored.
   assert.match(askedAbout(env.AI.calls[1]), /ignored this 2 times/);
   assert.match(askedAbout(env.AI.calls[2]), /ignored this 3 times/);
@@ -424,5 +433,5 @@ test("gpt-oss's OpenAI-style response shape is understood", async () => {
 
   const r = await runTick(env, T0);
   assert.equal(r.hinted, 1);
-  assert.match(nags()[0], /Check the garage shelf/);
+  assert.match(hintEdits()[0], /Check the garage shelf/);
 });

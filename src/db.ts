@@ -565,6 +565,13 @@ export class Db {
       .run();
   }
 
+  async setLastHint(id: string, hint: string): Promise<void> {
+    await this.d1
+      .prepare(`UPDATE reminder_instances SET last_hint = ?2 WHERE id = ?1`)
+      .bind(id, hint)
+      .run();
+  }
+
   async setNextNag(id: string, nextIso: string | null, hint?: string | null): Promise<void> {
     await this.d1
       .prepare(
