@@ -165,8 +165,14 @@ try {
       : "no second nag inside 2 minutes",
   );
 
-  // 5. The hint. Stored on the instance at send time, so the exact text the
-  //    model produced is inspectable — and its absence is a finding, not a shrug.
+  // 5. The hint. Since 31 Aug hints arrive by EDIT after the nag is already
+  //    delivered (send-then-enhance), so give the enhancement pass a moment
+  //    before reading last_hint — the send poll above returns too early.
+  for (let i = 0; i < 5 && !(inst?.last_hint && rinst?.last_hint); i++) {
+    await sleep(8_000);
+    [inst] = d1(`SELECT state, attempt_count, next_nag_at, last_hint FROM reminder_instances WHERE id='${INST_ID}'`);
+    [rinst] = d1(`SELECT state, attempt_count, next_nag_at, last_hint FROM reminder_instances WHERE id='${RINST_ID}'`);
+  }
   for (const [label, row] of [["one-off", inst], ["recurring", rinst]]) {
     if (row?.last_hint) {
       step(`AI hint on the ${label} nag`, true, `“${row.last_hint}”`);
