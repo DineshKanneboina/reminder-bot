@@ -158,7 +158,8 @@ nag goes out on time without one, which is the normal case rather than an error.
 | `tasks` | all your reminders, with spent one-offs separated out |
 | `pause 2h` · `resume` | mute without losing anything |
 | `set timezone to Asia/Tokyo` | existing reminders follow you |
-| `delete gym` | asks for confirmation first |
+| `delete gym` | asks for confirmation first — names the task and its schedule |
+| `2` · `both` | pick from a numbered match list (two reminders can share a name) |
 | `note for gym: ...` | context for one reminder |
 | `notes` · `notes for gym` | see every reminder's note and research |
 | `remember: I use Ryse protein` | a standing fact, used on every nudge |
@@ -337,7 +338,7 @@ stop. Worth doing: once you trust this thing, silence is indistinguishable from
 # Development
 
 ```bash
-npm test          # 130 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
+npm test          # 134 tests: date logic, tick lifecycle, board, one-offs, hints, webhooks
 npm run typecheck
 npm run check     # the deploy gate, minus the checks that need network
 npm run e2e       # live production test: create → real cron nag → hint → cleanup (~90s)

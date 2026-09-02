@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 130 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 134 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -75,6 +75,8 @@ Two loops over one D1 database:
 - A reminder that would first land in the past is refused, never stored. COUNT=1 gives it one chance, and a spent one is indistinguishable from a scheduled one in the tasks table.
 - Converting a recurring task to a one-off re-anchors dtstart to now, or its months-old anchor would spend the single occurrence on save.
 - Confirmation prompts never invent a time. An update with no stated time describes the task's real one.
+- A typed delete is resolved BEFORE it asks, and the pending action stores the task id: `y` acts on exactly what the prompt named. Two matches list numbered WITH schedules and take `1`/`2`/`both`; a bare title list cannot tell two "book Thailand flight"s apart. When the model hedges a name with an open-list number, the name wins — the number once pointed at update resume while the prompt said book Thailand flight (2 Sep).
+- A stray number or `both` against a plain y-question re-asks; it never confirms.
 - Spent one-offs are quarantined under "Already happened" in the tasks list. Nothing retires them (active stays 1), so listing them as live makes the whole list untrustworthy.
 
 ## Before shipping

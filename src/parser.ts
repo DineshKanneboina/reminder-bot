@@ -17,7 +17,16 @@ export type Intent =
 export interface Parsed {
   intent: Intent;
   confidence: number;
-  target: { instance_number: number | null; instance_id: string | null; task_query: string | null };
+  target: {
+    instance_number: number | null;
+    instance_id: string | null;
+    task_query: string | null;
+    /** A task already resolved by the bot itself (a staged delete). Never
+     *  model-supplied: the confirm step acts on exactly what was shown. */
+    task_id?: string | null;
+  };
+  /** Answer to a numbered choice the bot offered: a position, or all of them. */
+  choice: number | "all" | null;
   task: {
     title: string | null;
     /** Free text about what the task actually is, for nag-time hints. */
@@ -43,6 +52,7 @@ const blank = (intent: Intent, source: Parsed["source"], patch: Partial<Parsed> 
   intent,
   confidence: 1,
   target: { instance_number: null, instance_id: null, task_query: null },
+  choice: null,
   task: { title: null, notes: null, rrule: null, local_time: null, start_date: null, policy: null, overlap: null },
   snooze_minutes: null,
   timezone: null,
@@ -168,6 +178,28 @@ export function parseKeyword(raw: string, live: LiveInstance[]): Parsed | null {
     return blank("help", "keyword");
   }
   if (/^(y|yes|yep|confirm|ok|okay)$/.test(text)) return blank("confirm", "keyword");
+  // Answers to a numbered choice the bot offered ("That matches 2: …").
+  // "Both of them" once went to the model, which asked what the user meant.
+  if (/^(?:(?:delete|remove)\s+)?(?:both|all)(?:\s+of\s+them)?$/.test(text)) {
+    return blank("confirm", "keyword", { choice: "all" });
+  }
+  if ((m = /^(\d{1,2})$/.exec(text))) {
+    return blank("confirm", "keyword", { choice: parseInt(m[1], 10) });
+  }
+  // Typed delete, deterministic. The model, asked to delete something right
+  // after a conversation about a task, hedged with BOTH the name and an open
+  // list number — and the number pointed at a different reminder.
+  if ((m = /^(?:delete|remove)\s+(?:the\s+)?(\d{1,2})$/i.exec(text))) {
+    const idx = parseInt(m[1], 10);
+    return blank("delete", "keyword", {
+      target: { instance_number: idx, instance_id: byNumber(idx), task_query: null },
+    });
+  }
+  if ((m = /^(?:delete|remove)\s+(?:the\s+)?(?:reminder\s+(?:for\s+)?)?(\S.*)$/i.exec(raw.trim()))) {
+    return blank("delete", "keyword", {
+      target: { instance_number: null, instance_id: null, task_query: m[1].trim() },
+    });
+  }
   if (/^(resume|unpause|back)$/.test(text)) return blank("resume", "keyword");
 
   if ((m = /^(?:pause|stop|mute)\s*(\d+\s*\w*)?$/.exec(text))) {

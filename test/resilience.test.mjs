@@ -368,3 +368,87 @@ test("the batch message explains itself with its own numbers", async () => {
   assert.deepEqual(actions.map((a) => a.label), ["✅ 3", "✅ 4", "✅ 5", "✅ 6", "✅ 7"]);
   assert.equal(actions[4].payload, "done:i7:7");
 });
+
+// -------------------------------------------- the delete-wrong-target regression
+
+// The real conversation of 2 Sep: two tasks called "book Thailand flight" (a
+// spent one-off from 12 Aug and the live daily), "update resume" open at
+// position 1. "Delete book Thailand flight" → y → "That matches 2" with two
+// identical lines; "Both of them" → the model asked what that meant; "Delete
+// one" → y → "Removed update resume".
+async function thailand({ once = true } = {}) {
+  if (once) seedTask("t_once", "book Thailand flight", "FREQ=DAILY;COUNT=1", "21:00", localToUtc(2026, 8, 12, 18, 34, TZ));
+  seedTask("t_daily", "book Thailand flight", "FREQ=DAILY", "17:00");
+  // Every 2 days from the 20th: the 24th is an occurrence, so it is open.
+  seedTask("t_resume", "update resume", "FREQ=DAILY;INTERVAL=2", "09:00", localToUtc(2026, 8, 20, 0, 0, TZ));
+  seedTask("t_jp", "check open positions in JP portal", "FREQ=DAILY", "09:00");
+  await runTick(env, localToUtc(2026, 8, 24, 9, 0, TZ));
+  const db = new Db(d1);
+  const user = await db.user("u1");
+  const live = await db.liveForUser("u1", iso(T0));
+  const { parseKeyword } = await import("../build/parser.js");
+  const say = (text) => applyIntent(parseKeyword(text, live), user, db, env, live, T0);
+  const active = async () => (await db.tasksForUser("u1")).map((t) => t.id).sort();
+  return { db, user, live, say, active };
+}
+
+test("two tasks of one name are told apart by schedule, and 'both' removes both", async () => {
+  const { say, active } = await thailand();
+
+  const ask = await say("Delete book Thailand flight");
+  assert.match(ask.text, /That matches 2/);
+  assert.match(ask.text, /1\. <b>book Thailand flight<\/b> — once, Wed 12 Aug at 9:00 pm \(already happened\)/);
+  assert.match(ask.text, /2\. <b>book Thailand flight<\/b> — daily at 5:00 pm/);
+  assert.match(ask.text, /<code>both<\/code>/);
+  assert.doesNotMatch(ask.text, /Reply <code>y<\/code>/, "y would have nothing to act on");
+
+  const both = await say("Both of them");
+  assert.equal((both.text.match(/Removed/g) ?? []).length, 2, both.text);
+  assert.deepEqual(await active(), ["t_jp", "t_resume"], "update resume untouched");
+});
+
+test("a number picks one of the matches, and the other survives", async () => {
+  const { say, active } = await thailand();
+  await say("Delete book Thailand flight");
+  const one = await say("2");
+  assert.match(one.text, /Removed <b>book Thailand flight<\/b> — daily at 5:00 pm/);
+  assert.deepEqual(await active(), ["t_jp", "t_once", "t_resume"]);
+});
+
+test("a name outranks an open-list number the model hedged with", async () => {
+  // Single match this time, so the trap is purely the hedge: the model
+  // returned task_query "book Thailand flight" AND instance_number 1, where
+  // open item 1 is update resume. The prompt and the action must agree.
+  const { db, user, live, say, active } = await thailand({ once: false });
+  const resume = live.find((i) => i.title === "update resume");
+  const hedged = intentFor({
+    intent: "delete",
+    target: { instance_number: live.indexOf(resume) + 1, instance_id: resume.id, task_query: "book Thailand flight" },
+  });
+
+  const ask = await applyIntent(hedged, user, db, env, live, T0);
+  assert.match(ask.text, /Delete <b>book Thailand flight<\/b> — daily at 5:00 pm\?/);
+  assert.doesNotMatch(ask.text, /update resume/);
+
+  const done = await say("y");
+  assert.match(done.text, /Removed <b>book Thailand flight<\/b>/);
+  assert.deepEqual(await active(), ["t_jp", "t_resume"], "y removed what the prompt named, nothing else");
+});
+
+test("'delete 1' names the open item it will remove, and a stray number never confirms", async () => {
+  const { live, say, active } = await thailand();
+  const first = live[0];
+
+  const ask = await say("delete 1");
+  assert.match(ask.text, new RegExp(`Delete <b>${first.title}</b> — `));
+  assert.match(ask.text, /Reply <code>y<\/code>/);
+
+  // "3" against a plain y-question: keep asking, never guess.
+  const stray = await say("3");
+  assert.match(stray.text, /Reply <code>y<\/code>/);
+  assert.equal((await active()).length, 4, "nothing removed by a stray number");
+
+  await say("y");
+  assert.ok(!(await active()).includes(first.task_id), `${first.title} removed`);
+  assert.equal((await active()).length, 3);
+});

@@ -5,7 +5,7 @@
 
 import { Db, uid } from "./db";
 import { Parsed, needsConfirmation } from "./parser";
-import { describeRRule, firstOccurrence, isOneOff, parseRRule } from "./rrule";
+import { describeRRule, firstOccurrence, isOneOff, oneOffOccurrence, parseRRule } from "./rrule";
 import { describeSchedule, renderLiveList, renderPreferences, renderRemaining, renderTaskList, esc, shortDate } from "./render";
 import { clockLabel, iso, localDateStart, localDayBounds, ms, parseClock } from "./time";
 import { Env, LiveInstance, OutboundAction, TaskRow, UserRow } from "./types";
@@ -31,6 +31,7 @@ export async function applyIntent(
   now: number = Date.now(),
 ): Promise<Reply> {
   // Two-turn handshake for anything destructive or uncertain.
+  if (needsConfirmation(p) && p.intent === "delete") return stageDelete(db, user, p, live, now);
   if (needsConfirmation(p) && p.intent !== "unknown" && p.intent !== "confirm") {
     // An update is confirmed in terms of the real task, so resolve it first.
     let subject: TaskRow | null = null;
@@ -54,6 +55,31 @@ export async function applyIntent(
       // not depending on what time the suite happened to run.
       const pending = await db.takePendingAction(user.id, now);
       if (!pending) return { text: "Nothing waiting for confirmation." };
+
+      // A numbered choice: the staged delete matched several tasks and the
+      // user is picking. Only ids the list actually showed can be acted on.
+      const cands: string[] | undefined = pending.payload.candidates;
+      if (cands?.length) {
+        const tasks = (await db.tasksForUser(user.id)).filter((t) => cands.includes(t.id));
+        let chosen: TaskRow[] | null = null;
+        const pick = typeof p.choice === "number" ? cands[p.choice - 1] : null;
+        if (p.choice === "all") chosen = tasks;
+        else if (pick) chosen = tasks.filter((t) => t.id === pick);
+        if (!chosen) {
+          await db.putPendingAction(user.id, pending.payload, pending.summary, 300_000, now);
+          return { text: `${pending.summary}\n\n${choicePrompt(cands.length)}` };
+        }
+        if (chosen.length === 0) return { text: "Those are already gone." };
+        for (const t of chosen) await db.deactivateTask(t.id);
+        return {
+          text: chosen.map((t) => `🗑️ Removed <b>${esc(t.title)}</b> — ${describeTask(t, now)}.`).join("\n"),
+        };
+      }
+      // A number or "both" against a plain y-question: keep asking, do not guess.
+      if (p.choice !== null) {
+        await db.putPendingAction(user.id, pending.payload, pending.summary, 300_000, now);
+        return { text: `${pending.summary}\n\nReply <code>y</code> to confirm.` };
+      }
       const confirmed: Parsed = { ...pending.payload, confidence: 1, source: "button" };
       return applyIntent(confirmed, user, db, env, live, now);
     }
@@ -194,6 +220,13 @@ export async function applyIntent(
     }
 
     case "delete": {
+      // A staged delete carries the exact task the confirmation prompt named.
+      if (p.target.task_id) {
+        const task = (await db.tasksForUser(user.id)).find((t) => t.id === p.target.task_id);
+        if (!task) return { text: "That one is already gone." };
+        await db.deactivateTask(task.id);
+        return { text: `🗑️ Removed <b>${esc(task.title)}</b> — ${describeTask(task, now)}.` };
+      }
       // The ❌ Forever button carries an instance id; everything else names
       // the task. Both end at deactivateTask, which also retires live chains.
       if (p.target.instance_id) {
@@ -397,6 +430,75 @@ export async function applyIntent(
 }
 
 // ------------------------------------------------------------------ resolvers
+
+/**
+ * A typed delete is resolved BEFORE the question is asked, and the pending
+ * action stores the task id, so "y" acts on exactly what the prompt named.
+ *
+ * Resolving after the fact went wrong twice in one conversation (2 Sep): the
+ * prompt showed the query, "y" then found two tasks called book Thailand
+ * flight — identical lines, nothing to choose between — and when the model
+ * hedged a later "delete one" with the name AND open-list number 1, the prompt
+ * described the name while the action followed the number to update resume.
+ * A name outranks a number here, same as everywhere else.
+ */
+async function stageDelete(
+  db: Db,
+  user: UserRow,
+  p: Parsed,
+  live: LiveInstance[],
+  now: number,
+): Promise<Reply> {
+  const ask = async (task: TaskRow): Promise<Reply> => {
+    const staged: Parsed = {
+      ...p,
+      target: { instance_number: null, instance_id: null, task_query: null, task_id: task.id },
+    };
+    const summary =
+      `Delete <b>${esc(task.title)}</b> — ${describeTask(task, now)}? This stops all future reminders for it.`;
+    await db.putPendingAction(user.id, staged, summary, 300_000, now);
+    return { text: `${summary}\n\nReply <code>y</code> to confirm.` };
+  };
+
+  if (p.target.task_query) {
+    const matches = await db.findTasks(user.id, p.target.task_query);
+    if (matches.length === 0) return { text: `No reminder matching “${esc(p.target.task_query)}”.` };
+    if (matches.length === 1) return ask(matches[0]);
+    // Same title twice is exactly when a bare title list cannot help — each
+    // line carries its schedule, and the reply is a number or "both".
+    const summary =
+      `That matches ${matches.length}:\n` +
+      matches.map((t, k) => `${k + 1}. <b>${esc(t.title)}</b> — ${describeTask(t, now)}`).join("\n");
+    await db.putPendingAction(
+      user.id,
+      { ...p, candidates: matches.map((t) => t.id) },
+      summary,
+      300_000,
+      now,
+    );
+    return { text: `${summary}\n\n${choicePrompt(matches.length)}` };
+  }
+
+  const instId = p.target.instance_id ?? (p.target.instance_number ? live[p.target.instance_number - 1]?.id : null);
+  if (instId) {
+    const inst = await db.instance(instId);
+    const task = inst && (await db.tasksForUser(user.id)).find((t) => t.id === inst.task_id);
+    if (task) return ask(task);
+  }
+  return { text: "Which reminder? Say <code>delete gym</code>, or <code>delete 2</code> from the open list." };
+}
+
+const choicePrompt = (n: number): string =>
+  n === 2
+    ? `Reply <code>1</code> or <code>2</code>, or <code>both</code>.`
+    : `Reply a number from <code>1</code> to <code>${n}</code>, or <code>all</code>.`;
+
+/** A task's schedule, flagged when its one chance has already passed. */
+function describeTask(t: TaskRow, now: number): string {
+  const once = oneOffOccurrence(t.rrule, ms(t.dtstart), t.local_time, t.timezone);
+  const spent = once !== null && once <= now ? " (already happened)" : "";
+  return describeSchedule(t.rrule, ms(t.dtstart), t.local_time, t.timezone) + spent;
+}
 
 async function resolveTask(
   db: Db,
