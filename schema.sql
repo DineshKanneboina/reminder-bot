@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS reminder_instances (
   -- The first-step hint that went out with this chain's first nag, kept for
   -- the e2e suite today and the feedback loop later.
   last_hint       TEXT,
+  -- Prepared ahead of the due time so it can ride the notification itself:
+  -- an edited-in hint never reaches the lock screen. NULL falls back to edit.
+  next_hint       TEXT,
   UNIQUE(task_id, scheduled_for)
 );
 -- Partial index: the hot path only ever scans live rows.

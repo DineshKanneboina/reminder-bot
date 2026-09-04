@@ -565,6 +565,36 @@ export class Db {
       .run();
   }
 
+  /** Instances about to fire that have no hint waiting for them. */
+  async dueSoonUnhinted(untilIso: string, limit: number): Promise<LiveInstance[]> {
+    const r = await this.d1
+      .prepare(
+        `${INSTANCE_JOIN}
+          WHERE i.next_nag_at IS NOT NULL AND i.next_nag_at <= ?1
+            AND i.next_hint IS NULL
+            AND i.state IN ('pending','notified') AND t.active = 1
+          ORDER BY i.next_nag_at ASC LIMIT ?2`,
+      )
+      .bind(untilIso, limit)
+      .all<LiveInstance>();
+    return r.results ?? [];
+  }
+
+  async setNextHint(id: string, hint: string): Promise<void> {
+    await this.d1
+      .prepare(`UPDATE reminder_instances SET next_hint = ?2 WHERE id = ?1`)
+      .bind(id, hint)
+      .run();
+  }
+
+  /** The prepared hint just went out: it becomes the record of what was shown. */
+  async consumeHint(id: string): Promise<void> {
+    await this.d1
+      .prepare(`UPDATE reminder_instances SET last_hint = next_hint, next_hint = NULL WHERE id = ?1`)
+      .bind(id)
+      .run();
+  }
+
   async setLastHint(id: string, hint: string): Promise<void> {
     await this.d1
       .prepare(`UPDATE reminder_instances SET last_hint = ?2 WHERE id = ?1`)

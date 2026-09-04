@@ -120,19 +120,23 @@ test("a slow model does not hold up the nag", async () => {
   // Far longer than the 1200ms timeout; the nag must not wait for it. unref so
   // the abandoned generation doesn't hold node's event loop open for 30s after
   // the assertions pass — the real runtime tears it down with the request.
-  env.AI = fakeAI(
-    () =>
-      new Promise((res) => {
-        setTimeout(() => res({ response: "too late" }), 30_000).unref?.();
-      }),
-  );
+  let nagsOutWhenModelFirstAsked = -1;
+  env.AI = fakeAI(() => {
+    if (nagsOutWhenModelFirstAsked < 0) nagsOutWhenModelFirstAsked = nags().length;
+    return new Promise((res) => {
+      setTimeout(() => res({ response: "too late" }), 30_000).unref?.();
+    });
+  });
 
   const started = Date.now();
   const r = await runTick(env, T0);
   const elapsed = Date.now() - started;
 
   assert.equal(r.sent, 1, "the nag went out");
-  assert.ok(elapsed < 5000, `sent in ${elapsed}ms rather than waiting on the model`);
+  // The structural property: the notification was already delivered before
+  // the model was consulted at all. The timeout then bounds the tick.
+  assert.equal(nagsOutWhenModelFirstAsked, 1, "sent before the model was ever asked");
+  assert.ok(elapsed < 8000, `tick bounded by the timeout, took ${elapsed}ms`);
   assert.doesNotMatch(nags()[0], /too late/);
   assert.doesNotMatch(nags()[0], /💡/);
   assert.match(nags()[0], /Build shelf/, "and it is the normal nag");
@@ -197,8 +201,9 @@ test("a batched message gets no hint", async () => {
   await runTick(env, T0);
   assert.equal(nags().length, 1);
   assert.match(nags()[0], /5 due at once/);
-  assert.equal(env.AI.calls.length, 0);
   assert.doesNotMatch(nags()[0], /💡/);
+  assert.equal(hintEdits().length, 0, "nothing edited into a batch either");
+  // (Preparing hints for the items' LATER single nudges is fine and budgeted.)
 });
 
 // ------------------------------------------------------------------- capture
@@ -369,13 +374,19 @@ test("every nudge carries a hint, and the model knows which nudge it is", async 
   env.AI = fakeAI({ response: "Clear one shelf of books." });
 
   await runTick(env, T0);
-  for (const m of [10, 30]) await runTick(env, T0 + m * 60_000);
+  // The real cron ticks every minute; the one at +20 is what prepares the
+  // +30 nudge's hint inside the 10-minute window.
+  for (const m of [10, 20, 30]) await runTick(env, T0 + m * 60_000);
 
   assert.equal(nags().length, 3);
   assert.equal(env.AI.calls.length, 3, "one generation per notification");
-  assert.equal(hintEdits().length, 3, "each nag got its hint edited in");
-  for (const n of nags()) assert.doesNotMatch(n, /💡/, "never inline, never blocking");
-  for (const e of hintEdits()) assert.match(e, /💡/);
+  // Nudge one had nothing prepared (the task was due the moment it existed),
+  // so its hint was edited in. Each later nudge's hint was prepared right
+  // after the previous send and rode the notification itself.
+  assert.equal(hintEdits().length, 1, "only the first needed the fallback edit");
+  assert.doesNotMatch(nags()[0], /💡/);
+  assert.match(nags()[1], /💡/, "nudge two: inline, no model wait");
+  assert.match(nags()[2], /💡/, "nudge three: inline, no model wait");
   // Later nudges tell the model how long this has been ignored.
   assert.match(askedAbout(env.AI.calls[1]), /ignored this 2 times/);
   assert.match(askedAbout(env.AI.calls[2]), /ignored this 3 times/);
@@ -434,4 +445,26 @@ test("gpt-oss's OpenAI-style response shape is understood", async () => {
   const r = await runTick(env, T0);
   assert.equal(r.hinted, 1);
   assert.match(hintEdits()[0], /Check the garage shelf/);
+});
+
+test("a prepared hint rides the notification itself", async () => {
+  // Edited-in hints reached the chat but never the lock screen: a push
+  // notification is built from the first version of a message (owner, 2 Sep).
+  // So the hint is generated minutes AHEAD, stored, and sent inline — with no
+  // model call anywhere near the claim→send stretch.
+  seedTask();
+  env.AI = fakeAI({ response: "Put the brackets by the wall." });
+
+  const early = await runTick(env, T0 - 5 * 60_000);
+  assert.equal(early.sent, 0, "nothing is due yet");
+  assert.equal(early.prepared, 1, "but the hint for the coming nag is ready");
+  assert.equal(env.AI.calls.length, 1);
+
+  const r = await runTick(env, T0);
+  assert.equal(r.sent, 1);
+  assert.equal(r.hinted, 1);
+  assert.match(nags()[0], /💡 <i>Put the brackets by the wall\.<\/i>/, "in the message that notifies");
+  assert.equal(hintEdits().length, 0, "no edit needed");
+  const row = await d1.prepare("SELECT last_hint, next_hint FROM reminder_instances").first();
+  assert.equal(row.last_hint, "Put the brackets by the wall.", "recorded as shown");
 });

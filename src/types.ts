@@ -33,6 +33,8 @@ export interface Env {
   HINT_MODEL?: string;
   /** Max hints generated in one tick. Default 3. */
   HINT_BUDGET_PER_TICK?: string;
+  /** How far ahead of its nag a hint is prepared (default 10 minutes). */
+  HINT_PREP_MINUTES?: string;
   /** How long a hint may take before the nag goes without one. Default 3000. */
   HINT_TIMEOUT_MS?: string;
 
@@ -128,6 +130,8 @@ export interface InstanceRow {
   give_up_at: string;
   acknowledged_at: string | null;
   ack_source: string | null;
+  last_hint: string | null;
+  next_hint: string | null;
 }
 
 /** An instance joined to the fields we need to render, route and escalate it. */

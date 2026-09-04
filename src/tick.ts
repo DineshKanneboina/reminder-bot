@@ -30,6 +30,8 @@ export interface TickReport {
   hinted: number;
   /** Research refreshes performed this tick (budget: 1). */
   enriched: number;
+  /** Hints generated ahead of their nag, so they ride the notification. */
+  prepared: number;
 }
 
 const DEFAULT_QUIET_AGING_HOURS = 4;
@@ -38,7 +40,7 @@ export async function runTick(env: Env, now = Date.now()): Promise<TickReport> {
   const db = Db.from(env);
   const report: TickReport = {
     materialized: 0, expired: 0, superseded: 0, claimed: 0, sent: 0, failed: 0, caughtUp: 0,
-    parked: 0, hinted: 0, enriched: 0,
+    parked: 0, hinted: 0, enriched: 0, prepared: 0,
   };
 
   // Every tick leaves a row, even — especially — the ones that die. A weekend
@@ -148,18 +150,19 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
           };
         }
       }
-      // The nag goes out FIRST, plain, and the hint is EDITED IN after. It
-      // used to be generated inline before the send, which put a 3-second AI
-      // wait squarely between the claim and the delivery — and when the
-      // platform killed invocations mid-flight (Sunday 30 Aug), that window
-      // ate every kill: 34 claims on one reminder, zero messages delivered,
-      // the ladder burned to give-up in silence. Now the exposed claim→send
-      // stretch is milliseconds, and a kill during the hint wait costs only
-      // the hint — always the acceptable loss.
+      // No model call anywhere near the send. A hint prepared by phase G on
+      // an earlier tick rides the message itself — which is the only way it
+      // reaches the lock screen, since a push notification is built from the
+      // first version of a message. Nothing prepared? The nag still goes out
+      // plain, right now, and the hint is EDITED in below. Generating inline
+      // before the send put a 3-second AI wait between the claim and the
+      // delivery, and when the platform killed invocations mid-flight
+      // (Sunday 30 Aug) that window ate every kill: 34 claims, zero delivered.
+      const inlineHint = group.length === 1 ? lead.next_hint : null;
       const { text, actions } =
         group.length > 1
           ? renderBatch(group, startIdx)
-          : renderNag(lead, startIdx, live.length, null, research);
+          : renderNag(lead, startIdx, live.length, inlineHint, research);
 
       const step = Math.max(0, lead.escalation_step - 1);
       const ladder = safeJson<string[]>(lead.channel_ladder, ["primary"]);
@@ -189,10 +192,15 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
       for (const inst of group) {
         await db.setNextNag(inst.id, nextNagAt(inst, now));
       }
+      if (inlineHint) {
+        report.hinted++;
+        await db.consumeHint(lead.id);
+      }
 
-      // Now the enhancement pass. Single nags only (a batch is already a
-      // list), budget permitting, and only on channels that can edit.
-      if (group.length === 1 && hintBudget > 0 && res.providerMessageId && dest.channel.edit) {
+      // The fallback enhancement pass, for a nag nothing was prepared for.
+      // Single nags only (a batch is already a list), budget permitting, and
+      // only on channels that can edit.
+      if (!inlineHint && group.length === 1 && hintBudget > 0 && res.providerMessageId && dest.channel.edit) {
         hintBudget--;
         const hint = await firstStepHint(env, {
           title: lead.title,
@@ -232,6 +240,39 @@ async function tickPhases(env: Env, db: Db, report: TickReport, now: number): Pr
     report.superseded + report.caughtUp + report.materialized > 0;
   if (activity || new Date(now).getUTCMinutes() % 5 === 0) {
     await syncBoards(env, db, now).catch((e) => console.error("board phase failed", e));
+  }
+
+  // --- Phase G: prepare hints for what is about to fire --------------------
+  // Strictly after every send. Generated minutes ahead and stored on the
+  // instance, a hint costs the send path nothing and arrives inside the push
+  // notification (owner, 2 Sep: edited-in hints showed in the chat but never
+  // on the lock screen). Shares the tick's hint budget with the fallback
+  // above; whatever is left unprepared simply takes the fallback.
+  if (hintBudget > 0 && env.HINTS_ENABLED !== "0" && env.AI) {
+    const prepMin = Number(env.HINT_PREP_MINUTES ?? 10);
+    const soon = await db.dueSoonUnhinted(iso(now + prepMin * 60_000), hintBudget);
+    const factsByUser = new Map<string, string[]>();
+    for (const inst of soon) {
+      let facts = factsByUser.get(inst.user_id);
+      if (!facts) {
+        facts = (await db.preferences(inst.user_id)).map((r) => r.text);
+        factsByUser.set(inst.user_id, facts);
+      }
+      const enr = await db.enrichmentFor(inst.task_id);
+      hintBudget--;
+      const hint = await firstStepHint(env, {
+        title: inst.title,
+        notes: inst.notes,
+        // The attempt it will be shown on, not the one already counted.
+        attempt_count: inst.attempt_count + 1,
+        preferences: facts,
+        research: enr?.result ?? null,
+      });
+      if (hint) {
+        await db.setNextHint(inst.id, hint);
+        report.prepared++;
+      }
+    }
   }
 
   // --- Phase F: refresh ONE due research config ----------------------------
@@ -344,6 +385,8 @@ async function materialize(
         give_up_at: iso(firstNag + policy.give_up_after_minutes * 60_000),
         acknowledged_at: null,
         ack_source: null,
+        last_hint: null,
+        next_hint: null,
       };
       if (await db.insertInstanceIfAbsent(row)) created++;
     }

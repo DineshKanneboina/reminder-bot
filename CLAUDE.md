@@ -4,7 +4,7 @@ Personal nagging reminder bot. Telegram bot (@b4dger_bot) on Cloudflare Workers 
 
 ## Commands
 
-- `npm test` — 134 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
+- `npm test` — 135 tests, in-memory SQLite shim (test/d1-shim.mjs), no workerd. Run after every change. A pretest hook compiles src/ to build/ for tests.
 - `npm run typecheck` — tsc, strict
 - `npm run deploy` — gated: `predeploy` runs 8 checks first and a failure stops the deploy; `postdeploy` waits one tick and smoke-tests production afterwards
 - `npm run check` — the predeploy checks without the network ones (fast, for mid-work)
@@ -48,7 +48,7 @@ Two loops over one D1 database:
 - Replayed provider message ids are no-ops.
 - Downtime produces one digest, not a nag flood.
 - Snooze extends give_up_at.
-- A send is never *held* by an LLM call — structurally, not just by timeout: the nag is delivered PLAIN first, then the hint is generated and EDITED into the message (send-then-enhance, 31 Aug). The claim→send window is milliseconds; a platform kill during the model wait costs the hint, never the notification. Sunday 30 Aug proved why: 34 claims died inside the old inline 3s hint wait, zero nags delivered, the ladder burned to give-up in silence.
+- A send is never *held* by an LLM call — structurally, not just by timeout. Hints are PREPARED ahead (phase G, after all sends, for anything due within HINT_PREP_MINUTES) into `next_hint`, and the send renders them inline with no model call: that is the only way a hint reaches the lock screen, since a push notification is built from the first version of a message (2 Sep). Nothing prepared? The nag goes out plain and the hint is EDITED in afterwards (31 Aug fallback). Sunday 30 Aug proved why the model must never sit between claim and send: 34 claims died inside the old inline 3s wait, zero nags delivered, the ladder burned to give-up in silence.
 - `TickReport.hinted` exists so a broken model is diagnosable: `sent` above zero with `hinted` stuck at zero is the signature, and hint failures log rather than vanish.
 - Hint output is untrusted: dropped if it contains markup or a link, escaped again at render, capped in length. A missing hint is invisible; a mangled one is worse than none.
 - Bare "done"/"yes" never guess: done with 2+ live chains asks which; yes only confirms when a pending_action actually exists, else falls to the LLM with dialog context.

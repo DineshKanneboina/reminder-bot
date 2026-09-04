@@ -248,7 +248,7 @@ test("a carried-over item is dated in the list, not only on the board", async ()
   const lastNight = localToUtc(2026, 8, 11, 18, 0, TZ);
   d1.exec(`INSERT INTO reminder_instances VALUES
     ('i_last','t1','u1','${iso(lastNight)}','notified',2,1,
-     '${iso(morning + 3600_000)}','${iso(morning + 7200_000)}',NULL,NULL,NULL);`);
+     '${iso(morning + 3600_000)}','${iso(morning + 7200_000)}',NULL,NULL,NULL,NULL);`);
 
   const db = new Db(d1);
   const live = await db.liveForUser("u1", iso(morning));
@@ -318,8 +318,8 @@ test("supersede collapses an older live chain when a newer one comes due", async
   // Two live chains 30 minutes apart, both already due.
   d1.exec(`
     INSERT INTO reminder_instances VALUES
-      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL),
-      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL);
+      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL,NULL),
+      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL,NULL);
   `);
 
   const r = await runTick(env, T0);
@@ -339,8 +339,8 @@ test("stack keeps both chains alive and nags for both", async () => {
   seedTask("09:00", { policy: "pol_long", overlap: "stack" });
   d1.exec(`
     INSERT INTO reminder_instances VALUES
-      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL),
-      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL);
+      ('i_old','t1','u1','${iso(T0 - 30 * 60_000)}','notified',1,1,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL,NULL),
+      ('i_new','t1','u1','${iso(T0)}','pending',0,0,'${iso(T0)}','${iso(T0 + 72 * 3600_000)}',NULL,NULL,NULL,NULL);
   `);
 
   const r = await runTick(env, T0);
