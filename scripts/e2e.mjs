@@ -90,7 +90,7 @@ try {
   );
   d1(
     `INSERT INTO reminder_instances VALUES ('${INST_ID}','${TASK_ID}','${userId}',` +
-      `'${iso(now)}','pending',0,0,'${iso(now - 30_000)}','${iso(now + 2 * 3600_000)}',NULL,NULL,NULL)`,
+      `'${iso(now)}','pending',0,0,'${iso(now - 30_000)}','${iso(now + 2 * 3600_000)}',NULL,NULL,NULL,NULL)`,
   );
   // A RECURRING sibling: same policy, FREQ=DAILY. What is different — and
   // what this phase exists to prove — is the ladder: after the first nag a
@@ -109,7 +109,7 @@ try {
   );
   d1(
     `INSERT INTO reminder_instances VALUES ('${RINST_ID}','${RTASK_ID}','${userId}',` +
-      `'${iso(now)}','pending',0,0,'${iso(now - 30_000)}','${iso(now + 2 * 3600_000)}',NULL,NULL,NULL)`,
+      `'${iso(now)}','pending',0,0,'${iso(now - 30_000)}','${iso(now + 2 * 3600_000)}',NULL,NULL,NULL,NULL)`,
   );
   step("test reminders created", true, "a one-off and a daily, both due now, urgent, with notes");
 
