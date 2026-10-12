@@ -105,6 +105,9 @@ export default {
 
 /** If no tick has run for 3+ minutes, run one now. No-op under a healthy cron. */
 async function reviveIfStale(env: Env): Promise<void> {
+  // Shut down deliberately: a stale tick_log is the expected state, not a
+  // dead scheduler to resurrect every time the owner texts the bot.
+  if (env.SCHEDULER_ENABLED === "0") return;
   try {
     const db = Db.from(env);
     const [last] = await db.recentTicks(1);

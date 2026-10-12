@@ -50,6 +50,8 @@ export interface Env {
   // Board & routing
   /** "0" disables the daily board entirely. Anything else (or unset) enables it. */
   BOARD_ENABLED?: string;
+  /** "0" stops the webhook/health self-revive from running ticks while the cron is off. */
+  SCHEDULER_ENABLED?: string;
   /** Local HH:MM at which an otherwise-empty board is posted. Default 07:00. */
   BOARD_HOUR?: string;
   /** How long a quiet item sits on the board before it starts nagging. Default 4. */

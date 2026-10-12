@@ -10,10 +10,10 @@
 	// One tick per minute. Free plan allows up to 3 triggers per Worker; we use 1.
 	// Cron expressions are evaluated in UTC — all local-time reasoning happens in
 	// the app against each user's IANA zone, never here.
+	// SHUT DOWN 5 Oct 2026 (owner): no nagging. Restore the "* * * * *" cron
+	// AND set SCHEDULER_ENABLED back to "1" (or remove it) to bring it back.
 	"triggers": {
-		"crons": [
-			"* * * * *"
-		]
+		"crons": []
 	},
 	// Workers AI, for nag-time hints. Free tier; the send path degrades to a
 	// hintless nag whenever this is slow, absent, or out of quota.
@@ -28,6 +28,8 @@
 		}
 	],
 	"vars": {
+		// Blocks the self-revive on /health and the webhook while the cron is off.
+		"SCHEDULER_ENABLED": "0",
 		// Public origin of this Worker, used to build signed ack links in emails.
 		"PUBLIC_URL": "https://reminder-bot.dineshkan.workers.dev",
 		"PARSER_MODEL": "claude-haiku-4-5-20251001",
