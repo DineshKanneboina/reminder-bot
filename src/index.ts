@@ -19,6 +19,13 @@ const DEFAULT_TZ = "America/Chicago";
 export default {
   /** Cron Trigger. One minute cadence; see wrangler.jsonc. */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // Shut down (Oct 2026): a cron that Cloudflare keeps firing after the
+    // schedule was removed must still do nothing. The gate lives in code, not
+    // only in the trigger config, so no message can go out either way.
+    if (env.SCHEDULER_ENABLED === "0") {
+      console.log("tick skipped: SCHEDULER_ENABLED=0");
+      return;
+    }
     ctx.waitUntil(
       runTick(env).then(
         (r) => console.log("tick", r),
